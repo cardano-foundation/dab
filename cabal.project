@@ -2,5 +2,6 @@ packages:
   plutus-chain-index-blockfrost
   ~/blockfrost/blockfrost-hs-internal/blockfrost-freer-client
   ~/git/plutus-apps/plutus-ledger
+  ~/git/plutus-apps/plutus-chain-index
   ~/git/plutus-apps/plutus-chain-index-core
   ~/git/plutus-apps/freer-extras

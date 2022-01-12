@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+export BLOCKFROST_TOKEN_PATH=~/.blockfrost.testnet.token
+cabal run plutus-chain-index-blockfrost -- start-index -l default-ci.yaml -c chain-index-config.json
