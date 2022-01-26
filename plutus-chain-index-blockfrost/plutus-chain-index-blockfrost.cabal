@@ -59,6 +59,8 @@ library
                      , beam-core
                      , beam-sqlite
                      , plutus-ledger
+                     , base16-bytestring
+                     , serialise
 		     -- run
                      , sqlite-simple
                      , iohk-monitoring

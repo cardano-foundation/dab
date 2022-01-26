@@ -44,7 +44,7 @@ import Database.Beam.Query (HasSqlEqualityCheck, asc_, desc_, exists_, orderBy_,
                             (>.))
 import Database.Beam.Schema.Tables (zipTables)
 import Database.Beam.Sqlite (Sqlite)
-import Ledger (Address (..), ChainIndexTxOut (..), Datum, DatumHash (..), TxId (..), TxOut (..), TxOutRef (..))
+import Ledger (Address (..), ChainIndexTxOut (..), Datum, DatumHash (..), TxId (..), TxOut (..), TxOutRef (..), ValidatorHash (..), Validator (..))
 import Ledger.Value (AssetClass (AssetClass), flattenValue)
 import Plutus.ChainIndex.Api (IsUtxoResponse (IsUtxoResponse), TxosResponse (TxosResponse),
                               UtxosResponse (UtxosResponse))
@@ -67,9 +67,17 @@ import Blockfrost.Freer.Client qualified as BFC
 import Blockfrost.Freer.Client qualified as Blockfrost
 
 -- conversions
+import qualified Data.ByteString.Char8
 import qualified Data.Text
 import qualified Cardano.Api.Shelley as Api
 import qualified PlutusTx -- .Builtins
+
+import Codec.Serialise qualified as CBOR
+import Data.ByteString.Base16 qualified as Base16
+
+import Data.ByteString.Lazy qualified as BL
+import Data.ByteString.Short qualified as BS
+
 
 type ChainIndexState = UtxoIndex TxUtxoBalance
 
@@ -90,9 +98,9 @@ handleQuery ::
 handleQuery = \case
     DatumFromHash dh            -> getDatumFromHash dh
     ValidatorFromHash hash      -> getScriptFromHash hash
-    MintingPolicyFromHash hash  -> getScriptFromHash hash
+    MintingPolicyFromHash hash  -> getScriptFromHash' hash
     RedeemerFromHash hash       -> getRedeemerFromHash hash
-    StakeValidatorFromHash hash -> getScriptFromHash hash
+    StakeValidatorFromHash hash -> getScriptFromHash' hash
     TxFromTxId txId             -> getTxFromTxId txId
     TxOutFromRef tor            -> getTxOutFromRef tor
     UtxoSetMembership r -> do
@@ -112,6 +120,8 @@ getTip = fmap fromDbValue . selectOne . select $ limit_ 1 (orderBy_ (desc_ . _ti
 
 getDatumFromHash' :: Member BeamEffect effs => DatumHash -> Eff effs (Maybe Datum)
 getDatumFromHash' = queryOne . queryKeyValue datumRows _datumRowHash _datumRowDatum
+
+tryError act = (Right <$> act) `catchError` (pure . Left)
 
 getDatumFromHash :: (LastMember IO effs, Members ClientEffects effs) => DatumHash -> Eff effs (Maybe Datum)
 getDatumFromHash x = do
@@ -138,7 +148,35 @@ getDatumFromHash x = do
 getTxFromTxId :: Member BeamEffect effs => TxId -> Eff effs (Maybe ChainIndexTx)
 getTxFromTxId = queryOne . queryKeyValue txRows _txRowTxId _txRowTx
 
-getScriptFromHash ::
+getScriptFromHash :: (LastMember IO effs, Members ClientEffects effs) => ValidatorHash -> Eff effs (Maybe Validator)
+getScriptFromHash x = do
+  let hash = Blockfrost.ScriptHash $ Data.Text.pack $ show x
+  eres <- catchError @BlockfrostError (Right <$> Blockfrost.getScript hash) 
+    (\e -> pure $ Left e)
+  case eres of
+    Left (Blockfrost.BlockfrostNotFound) -> pure Nothing
+    -- TODO: rethrow as part of our custom BlockfrostChainIndexError
+    -- Left _ -> pure Nothing
+    --Right (Blockfrost.Script{..} ) -> do
+    Right (_scr) -> do
+      -- TODO: assert that it is plututs type script
+      Blockfrost.ScriptCBOR b16cbor <- Blockfrost.getScriptCBOR hash
+      -- error $ show ("script", _scr, "cbor", b16cbor)
+      case Base16.decode . Data.ByteString.Char8.pack . Data.Text.unpack <$> b16cbor of
+        Nothing -> undefined
+        Just x -> case x of
+          Left e -> error $ show ("b16 dec failed", e)
+          Right dec -> do
+            let Right (Api.PlutusScriptSerialised sbs) = Api.deserialiseFromCBOR (Api.AsPlutusScript Api.AsPlutusScriptV1) dec
+            let n = CBOR.deserialiseOrFail $ BL.fromStrict $ BS.fromShort sbs
+            case n of
+              Left ex -> error $ show ("no des", ex)
+              Right x -> return $ pure $ Validator x
+            --error $ show ("yay", sbs, n)
+  --case eres of
+
+
+getScriptFromHash' ::
     ( Member BeamEffect effs
     , HasDbType i
     , DbType i ~ ByteString
@@ -146,7 +184,7 @@ getScriptFromHash ::
     , DbType o ~ ByteString
     ) => i
     -> Eff effs (Maybe o)
-getScriptFromHash = queryOne . queryKeyValue scriptRows _scriptRowHash _scriptRowScript
+getScriptFromHash' = queryOne . queryKeyValue scriptRows _scriptRowHash _scriptRowScript
 
 getRedeemerFromHash ::
     ( Member BeamEffect effs
