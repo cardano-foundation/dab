@@ -31,6 +31,8 @@ import Plutus.ChainIndex.Lib (defaultChainSyncHandler, getTipSlot, showingProgre
 import Plutus.ChainIndex.Logging qualified as Logging
 import Plutus.ChainIndex.Blockfrost.Server qualified as Server
 
+import Control.Monad
+
 main :: IO ()
 main = do
   -- Parse comand line arguments.
@@ -73,13 +75,14 @@ runMain logConfig config = do
     slotNo <- getTipSlot config
     print slotNo
 
-    syncHandler
-      <- defaultChainSyncHandler runReq
-        & storeFromBlockNo (fromCardanoBlockNo $ Config.cicStoreFrom config)
-        & showingProgress
+    when True $ do
+      syncHandler
+        <- defaultChainSyncHandler runReq
+          & storeFromBlockNo (fromCardanoBlockNo $ Config.cicStoreFrom config)
+          & showingProgress
 
-    putStrLn $ "Connecting to the node using socket: " <> Config.cicSocketPath config
-    syncChainIndex config runReq syncHandler
+      putStrLn $ "Connecting to the node using socket: " <> Config.cicSocketPath config
+      syncChainIndex config runReq syncHandler
 
     let port = show (Config.cicPort config)
     putStrLn $ "Starting webserver on port " <> port
