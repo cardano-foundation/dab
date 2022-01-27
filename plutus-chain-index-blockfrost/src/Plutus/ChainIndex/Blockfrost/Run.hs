@@ -83,11 +83,11 @@ handleChainIndexEffects RunRequirements{trace, stateMVar, conn, securityParam} a
         $ interpret handleQuery
         -- Insert the 5 effects needed by the handlers of the 3 chain index effects between those 3 effects and 'effs'.
         -- $ raiseMUnderN @[_,_,_,_,_] @[_,_,_] action
-        -- Insert the 8 effects needed by the handlers of the 3 chain index effects between those 3 effects and 'effs'.
-         $ raiseMUnderN @[_,_,_,_,_,_,_,_,_] @[_,_,_] action
+        -- Insert the 7 effects needed by the handlers of the 3 chain index effects between those 3 effects and 'effs'.
+         $ raiseMUnderN @[_,_,_,_,_,_,_] @[_,_,_] action
     liftIO $ putMVar stateMVar newState
     pure $ case result of
       Left ciE -> Left ciE
-      Right (Left bfE) -> error "WHATDAYADA"
+      Right (Left bfE) -> error $ show ("got blockfrost error", bfE)
       Right (Right ok) -> Right ok
     --pure result
