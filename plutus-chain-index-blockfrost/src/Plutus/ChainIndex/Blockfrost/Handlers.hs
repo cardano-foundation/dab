@@ -44,7 +44,7 @@ import Database.Beam.Query (HasSqlEqualityCheck, asc_, desc_, exists_, orderBy_,
                             (>.))
 import Database.Beam.Schema.Tables (zipTables)
 import Database.Beam.Sqlite (Sqlite)
-import Ledger (Address (..), ChainIndexTxOut (..), Datum, DatumHash (..), TxId (..), TxOut (..), TxOutRef (..), ValidatorHash (..), Validator (..))
+import Ledger (Address (..), ChainIndexTxOut (..), Datum, DatumHash (..), TxId (..), TxOut (..), TxOutRef (..), ValidatorHash (..), Validator (..), Slot(..))
 import Ledger.Value (AssetClass (AssetClass), flattenValue)
 import Plutus.ChainIndex.Api (IsUtxoResponse (IsUtxoResponse), TxosResponse (TxosResponse),
                               UtxosResponse (UtxosResponse))
@@ -55,7 +55,7 @@ import Plutus.ChainIndex.DbSchema
 import Plutus.ChainIndex.Effects (ChainIndexControlEffect (..), ChainIndexQueryEffect (..))
 import Plutus.ChainIndex.Tx
 import Plutus.ChainIndex.TxUtxoBalance qualified as TxUtxoBalance
-import Plutus.ChainIndex.Types (ChainSyncBlock (..), Depth (..), Diagnostics (..), Point (..), Tip (..),
+import Plutus.ChainIndex.Types (ChainSyncBlock (..), Depth (..), Diagnostics (..), Point (..), Tip (..), BlockNumber(..), BlockId(..),
                                 TxProcessOption (..), TxUtxoBalance (..), tipAsPoint)
 import Plutus.ChainIndex.UtxoState (InsertUtxoSuccess (..), RollbackResult (..), UtxoIndex)
 import Plutus.ChainIndex.UtxoState qualified as UtxoState
@@ -69,6 +69,7 @@ import Blockfrost.Freer.Client qualified as Blockfrost
 -- conversions
 import qualified Data.ByteString.Char8
 import qualified Data.Text
+import qualified Data.Text.Encoding
 import qualified Cardano.Api.Shelley as Api
 import qualified PlutusTx -- .Builtins
 
@@ -115,8 +116,19 @@ handleQuery = \case
     TxsFromTxIds txids             -> getTxsFromTxIds txids
     GetTip -> getTip
 
-getTip :: Member BeamEffect effs => Eff effs Tip
-getTip = fmap fromDbValue . selectOne . select $ limit_ 1 (orderBy_ (desc_ . _tipRowSlot) (all_ (tipRows db)))
+getTip' :: Member BeamEffect effs => Eff effs Tip
+getTip' = fmap fromDbValue . selectOne . select $ limit_ 1 (orderBy_ (desc_ . _tipRowSlot) (all_ (tipRows db)))
+
+getTip :: (LastMember IO effs, Members ClientEffects effs) => Eff effs Tip
+getTip = bfBlockToTip <$> Blockfrost.getLatestBlock
+
+bfBlockToTip Blockfrost.Block{Blockfrost._blockHash=bh, Blockfrost._blockSlot=Just (Blockfrost.Slot bs), Blockfrost._blockHeight=Just bheight} = Tip {
+    tipSlot = Slot bs
+  , tipBlockId = BlockId (either (error . show) id $ Base16.decode $ Data.ByteString.Char8.pack $ Data.Text.unpack $ Blockfrost.unBlockHash bh)
+  , tipBlockNo = BlockNumber (fromInteger bheight)
+  }
+-- TODO: BlockfrostChainIndexError, shouldn't happen tho
+bfBlockToTip _ = error "slot or blockHeight is Nothing"
 
 getDatumFromHash' :: Member BeamEffect effs => DatumHash -> Eff effs (Maybe Datum)
 getDatumFromHash' = queryOne . queryKeyValue datumRows _datumRowHash _datumRowDatum
