@@ -133,8 +133,6 @@ bfBlockToTip _ = error "slot or blockHeight is Nothing"
 getDatumFromHash' :: Member BeamEffect effs => DatumHash -> Eff effs (Maybe Datum)
 getDatumFromHash' = queryOne . queryKeyValue datumRows _datumRowHash _datumRowDatum
 
-tryError act = (Right <$> act) `catchError` (pure . Left)
-
 getDatumFromHash :: (LastMember IO effs, Members ClientEffects effs) => DatumHash -> Eff effs (Maybe Datum)
 getDatumFromHash x = do
   eres <- catchError @BlockfrostError (Right <$> (Blockfrost.getScriptDatum $ Blockfrost.DatumHash $ Data.Text.pack $ show x))
