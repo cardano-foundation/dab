@@ -79,6 +79,8 @@ import Data.ByteString.Base16 qualified as Base16
 import Data.ByteString.Lazy qualified as BL
 import Data.ByteString.Short qualified as BS
 
+import Control.Monad.IO.Class
+
 
 type ChainIndexState = UtxoIndex TxUtxoBalance
 
@@ -119,8 +121,16 @@ handleQuery = \case
 getTip' :: Member BeamEffect effs => Eff effs Tip
 getTip' = fmap fromDbValue . selectOne . select $ limit_ 1 (orderBy_ (desc_ . _tipRowSlot) (all_ (tipRows db)))
 
-getTip :: (LastMember IO effs, Members ClientEffects effs) => Eff effs Tip
-getTip = bfBlockToTip <$> Blockfrost.getLatestBlock
+getTip :: (LastMember IO effs, Member BeamEffect effs, Members ClientEffects effs) => Eff effs Tip
+getTip = do
+  x <- bfBlockToTip <$> Blockfrost.getLatestBlock
+  x' <- getTip'
+  liftIO $ do
+    putStrLn "Blockfrost"
+    print x
+    putStrLn "Local node"
+    print x'
+  return x
 
 bfBlockToTip Blockfrost.Block{Blockfrost._blockHash=bh, Blockfrost._blockSlot=Just (Blockfrost.Slot bs), Blockfrost._blockHeight=Just bheight} = Tip {
     tipSlot = Slot bs
