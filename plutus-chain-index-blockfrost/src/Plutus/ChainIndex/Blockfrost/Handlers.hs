@@ -45,7 +45,7 @@ import Database.Beam.Query (HasSqlEqualityCheck, asc_, desc_, exists_, orderBy_,
 import Database.Beam.Schema.Tables (zipTables)
 import Database.Beam.Sqlite (Sqlite)
 import Ledger (Address (..), ChainIndexTxOut (..), Datum, DatumHash (..), TxId (..), TxOut (..), TxOutRef (..), ValidatorHash (..), Validator (..), Slot(..))
-import Ledger.Value (AssetClass (AssetClass), flattenValue, singleton)
+import Ledger.Value (AssetClass (AssetClass), flattenValue, singleton, currencySymbol, tokenName)
 import Plutus.ChainIndex.Api (IsUtxoResponse (IsUtxoResponse), TxosResponse (TxosResponse),
                               UtxosResponse (UtxosResponse))
 import Plutus.ChainIndex.ChainIndexError (ChainIndexError (..))
@@ -329,15 +329,15 @@ getTxOutFromRef ref@TxOutRef{txOutRefId, txOutRefIdx} = do
 
 
 amountToValue (Blockfrost.AdaAmount disc) = Ada.lovelaceValueOf $ Money.someDiscreteAmount $ Money.toSomeDiscrete disc
-amountToValue (Blockfrost.AssetAmount someDisc) = 
-  singleton (fromString curSym) (fromString tok) $ Money.someDiscreteAmount someDisc
+amountToValue (Blockfrost.AssetAmount someDisc) =
+  singleton (currencySymbol curSym) (tokenName tok) $ Money.someDiscreteAmount someDisc
   where
     (curSym, tok) = decodePolicyToken $ Money.someDiscreteCurrency someDisc
 
 decodePolicyToken concatenated =
   let
-    curSym = Data.Text.unpack $ Data.Text.take 56 concatenated
-    tok = Data.ByteString.Char8.unpack $ either (error . show) id $ Base16.decode $ Data.ByteString.Char8.pack  $Data.Text.unpack $ Data.Text.drop 56 concatenated
+    curSym = either (error . show) id $ Base16.decode $ Data.ByteString.Char8.pack $ Data.Text.unpack $ Data.Text.take 56 concatenated
+    tok = either (error . show) id $ Base16.decode $ Data.ByteString.Char8.pack $ Data.Text.unpack $ Data.Text.drop 56 concatenated
   in (curSym, tok)
 
 getUtxoSetAtAddress
