@@ -45,6 +45,8 @@ import Database.Beam.Query (HasSqlEqualityCheck, asc_, desc_, exists_, orderBy_,
 import Database.Beam.Schema.Tables (zipTables)
 import Database.Beam.Sqlite (Sqlite)
 import Ledger (Address (..), ChainIndexTxOut (..), Datum, DatumHash (..), TxId (..), TxOut (..), TxOutRef (..), ValidatorHash (..), Validator (..), Slot(..))
+import Ledger.Crypto (PubKeyHash(..))
+import Ledger.Credential (Credential (PubKeyCredential), StakingCredential (StakingHash))
 import Ledger.Value (AssetClass (AssetClass), flattenValue, singleton, currencySymbol, tokenName)
 import Plutus.ChainIndex.Api (IsUtxoResponse (IsUtxoResponse), TxosResponse (TxosResponse),
                               UtxosResponse (UtxosResponse))
@@ -61,7 +63,6 @@ import Plutus.ChainIndex.UtxoState (InsertUtxoSuccess (..), RollbackResult (..),
 import Plutus.ChainIndex.UtxoState qualified as UtxoState
 import Plutus.V1.Ledger.Ada qualified as Ada
 import Plutus.V1.Ledger.Api (Credential (PubKeyCredential, ScriptCredential))
-import qualified Plutus.V1.Ledger.Api as PV1Api
 
 import Blockfrost.Freer.Client (BlockfrostError, ClientEffects)
 import Blockfrost.Freer.Client qualified as BFC
@@ -72,7 +73,8 @@ import qualified Data.ByteString.Char8
 import qualified Data.Text
 import qualified Data.Text.Encoding
 import qualified Cardano.Api.Shelley as Api
-import qualified PlutusTx -- .Builtins
+import qualified PlutusTx
+import qualified PlutusTx.Prelude
 
 import Codec.Serialise qualified as CBOR
 import Data.ByteString.Base16 qualified as Base16
@@ -88,6 +90,7 @@ import qualified Money
 import Data.String (fromString)
 
 import qualified Cardano.Address
+import Cardano.Address.Style.Shelley (AddressInfo(..), InspectAddress(..))
 import qualified Cardano.Address.Style.Shelley
 
 type ChainIndexState = UtxoIndex TxUtxoBalance
@@ -157,9 +160,16 @@ comparingResponses a b = do
 getDatumFromHash' :: Member BeamEffect effs => DatumHash -> Eff effs (Maybe Datum)
 getDatumFromHash' = queryOne . queryKeyValue datumRows _datumRowHash _datumRowDatum
 
-getDatumFromHash :: (LastMember IO effs, Members ClientEffects effs) => DatumHash -> Eff effs (Maybe Datum)
-getDatumFromHash x = do
-  eres <- Blockfrost.tryError $ Blockfrost.getScriptDatum $ Blockfrost.DatumHash $ Data.Text.pack $ show x
+-- Blockfrost.DatumHash "d22d3b69db8edb4ee2df2a375e68f2aaecac34f6b9fa320d7a1ebaa44a706d90"
+toBlockfrostDatumHash :: DatumHash -> Blockfrost.DatumHash
+toBlockfrostDatumHash = Blockfrost.DatumHash . Data.Text.pack . show
+
+fromBlockfrostDatumHash :: Blockfrost.DatumHash -> ValidatorHash
+fromBlockfrostDatumHash = fromString . Data.Text.unpack . Blockfrost.unDatumHash
+
+getDatumFromHashB :: (LastMember IO effs, Members ClientEffects effs) => DatumHash -> Eff effs (Maybe Datum)
+getDatumFromHashB dh = do
+  eres <- Blockfrost.tryError $ Blockfrost.getScriptDatum $ toBlockfrostDatumHash dh
   case eres of
     Left Blockfrost.BlockfrostNotFound -> pure Nothing
     Left e -> throwError e
@@ -171,12 +181,23 @@ getDatumFromHash x = do
                 Nothing -> return $ Nothing
             Left err -> error $ show ("transcoding error:", err)
 
+getDatumFromHash :: (LastMember IO effs, Member BeamEffect effs, Members ClientEffects effs) => DatumHash -> Eff effs (Maybe Datum)
+getDatumFromHash =
+ liftM2 comparingResponses getDatumFromHash' getDatumFromHashB
+
 getTxFromTxId :: Member BeamEffect effs => TxId -> Eff effs (Maybe ChainIndexTx)
 getTxFromTxId = queryOne . queryKeyValue txRows _txRowTxId _txRowTx
 
-getScriptFromHash :: (LastMember IO effs, Members ClientEffects effs) => ValidatorHash -> Eff effs (Maybe Validator)
-getScriptFromHash x = do
-  let hash = Blockfrost.ScriptHash $ Data.Text.pack $ show x
+-- Blockfrost.ScriptHash "67f33146617a5e61936081db3b2117cbf59bd2123748f58ac9678656"
+toBlockfrostScriptHash :: ValidatorHash -> Blockfrost.ScriptHash
+toBlockfrostScriptHash = Blockfrost.ScriptHash . Data.Text.pack . show
+
+fromBlockfrostScriptHash :: Blockfrost.ScriptHash -> ValidatorHash
+fromBlockfrostScriptHash = fromString . Data.Text.unpack . Blockfrost.unScriptHash
+
+getScriptFromHashB :: (LastMember IO effs, Members ClientEffects effs) => ValidatorHash -> Eff effs (Maybe Validator)
+getScriptFromHashB vh = do
+  let hash = toBlockfrostScriptHash vh
   eres <- Blockfrost.tryError $ Blockfrost.getScript hash
   case eres of
     Left Blockfrost.BlockfrostNotFound -> pure Nothing
@@ -206,6 +227,10 @@ getScriptFromHash' ::
     ) => i
     -> Eff effs (Maybe o)
 getScriptFromHash' = queryOne . queryKeyValue scriptRows _scriptRowHash _scriptRowScript
+
+getScriptFromHash :: (LastMember IO effs, Member BeamEffect effs, Members ClientEffects effs) => ValidatorHash -> Eff effs (Maybe Validator)
+getScriptFromHash =
+ liftM2 comparingResponses getScriptFromHash' getScriptFromHashB
 
 getRedeemerFromHash ::
     ( Member BeamEffect effs
@@ -276,48 +301,78 @@ getTxOutFromRef' ref@TxOutRef{txOutRefId, txOutRefIdx} = do
                 pure $ Just $ ScriptChainIndexTxOut (txOutAddress txout) v d (txOutValue txout)
 
 -- | Get the 'ChainIndexTxOut' for a 'TxOutRef'.
-getTxOutFromRef ::
+getTxOutFromRefB ::
   forall effs.
   ( Member (LogMsg ChainIndexLog) effs
   , Members ClientEffects effs
   , LastMember IO effs
-  -- TMP
-  , Member BeamEffect effs
   )
   => TxOutRef
   -> Eff effs (Maybe ChainIndexTxOut)
-getTxOutFromRef ref@TxOutRef{txOutRefId, txOutRefIdx} = do
+getTxOutFromRefB ref@TxOutRef{txOutRefId, txOutRefIdx} = do
   let hash = Blockfrost.TxHash $ Data.Text.pack $ show txOutRefId
-    -- PV1Api.fromBuiltin txOutRefId
   liftIO $ print ("hash", hash)
-  eres <- Blockfrost.tryError $ Blockfrost.getTxUtxos hash -- (Blockfrost.TxHash txOutRefId)
+  eres <- Blockfrost.tryError $ Blockfrost.getTxUtxos hash
   case eres of
-    Left (Blockfrost.BlockfrostNotFound) -> pure Nothing
-    --Right (Blockfrost.Script{..} ) -> do
+    Left Blockfrost.BlockfrostNotFound -> logWarn (TxOutNotFound ref) >> pure Nothing
+    Left e -> throwError e
     Right res -> do
       let out = filter ((==txOutRefIdx) . view Blockfrost.outputIndex) (res ^. Blockfrost.outputs)
-      liftIO $ print out
-      let addrs = map (\x -> x ^. Blockfrost.address) out
+      -- liftIO $ print out
+      case out of
+        [txo] -> do
+          let addr = txo ^. Blockfrost.address
+          let inspectAddr = Cardano.Address.Style.Shelley.eitherInspectAddress Nothing . maybe (error "fromBech32 failed") id . Cardano.Address.fromBech32 . Blockfrost.unAddress $ addr
+          let txoValue = mconcat $ map amountToValue $ txo ^. Blockfrost.amount
 
-      liftIO $ print addrs
-      liftIO $ print (map (Cardano.Address.fromBech32 . Blockfrost.unAddress) addrs)
-      liftIO $ print (map (Cardano.Address.Style.Shelley.eitherInspectAddress Nothing . maybe (error "no fromBech32") id . Cardano.Address.fromBech32 . Blockfrost.unAddress) addrs)
-      liftIO $ print $ mconcat $ mconcat $ map (\x -> map amountToValue $ x ^. Blockfrost.amount) out
-      x <- getTxOutFromRef' ref
-      liftIO $ print x
-      getTxOutFromRef' ref
-  -- if datumHash then
-  -- getDatumFromHash
-  -- getScriptFromHash
-  ---- 81   │   | ScriptChainIndexTxOut { _ciTxOutAddress   :: Address
-  ---- 82   │                           , _ciTxOutValidator :: Either ValidatorHash Validator
-  ---- 83   │                           , _ciTxOutDatum     :: Either DatumHash Datum
-  ---- 84   │                           , _ciTxOutValue     :: Value
-  ---- 85   │                           }
-  -- else
-  ---- pure $ PublicKeyChainIndexTxOut { _ciTxOutAddress :: Address
-  ---- 79   │                              , _ciTxOutValue   :: Value
-  ---- 80   │                              }
+          case inspectAddr of
+            Right (InspectAddressShelley (AddressInfo {
+                infoSpendingKeyHash = Just spendingKeyHash
+              , infoStakeKeyHash = Just stakeKeyHash })) -> do
+                  let plutusAddr =
+                        Address {
+                          addressCredential = PubKeyCredential $ PubKeyHash $ PlutusTx.Prelude.toBuiltin spendingKeyHash
+                        , addressStakingCredential = Just (StakingHash (PubKeyCredential $ PubKeyHash $ PlutusTx.Prelude.toBuiltin stakeKeyHash))
+                        }
+
+                  pure $ Just $ PublicKeyChainIndexTxOut plutusAddr txoValue
+
+            Right (InspectAddressShelley (AddressInfo {
+                infoScriptHash = Just scriptHash })) -> do
+
+                  let vh = ValidatorHash $ PlutusTx.Prelude.toBuiltin scriptHash
+                      dh = fromString $ Data.Text.unpack
+                              $ maybe (error "Script credential but data hash is nothing") id
+                              $ txo ^. Blockfrost.dataHash
+
+                  -- TODO: B suffixed because comparing forces Beam eff
+                  v <- maybe (Left vh) Right <$> getScriptFromHashB vh
+                  d <- maybe (Left dh) Right <$> getDatumFromHashB dh
+
+                  pure $ Just $ ScriptChainIndexTxOut {
+                      _ciTxOutAddress = Address {
+                        addressCredential = ScriptCredential vh
+                      , addressStakingCredential = Nothing
+                      }
+                    , _ciTxOutValidator = v
+                    , _ciTxOutDatum = d
+                    , _ciTxOutValue = txoValue
+                    }
+
+            Left e -> error $ "Error inspecting address " ++ show e
+            o -> error $ "Unexpected inspect address result " ++ show o
+
+        _ -> pure Nothing
+
+getTxOutFromRef
+  :: (LastMember IO effs
+    , Member (LogMsg ChainIndexLog) effs
+    , Member BeamEffect effs
+    , Members ClientEffects effs)
+  => TxOutRef
+  -> Eff effs (Maybe ChainIndexTxOut)
+getTxOutFromRef =
+ liftM2 comparingResponses getTxOutFromRef' getTxOutFromRefB
 
 amountToValue (Blockfrost.AdaAmount disc) = Ada.lovelaceValueOf $ Money.someDiscreteAmount $ Money.toSomeDiscrete disc
 amountToValue (Blockfrost.AssetAmount someDisc) =
