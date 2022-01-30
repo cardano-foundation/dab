@@ -137,20 +137,11 @@ bfBlockToTip Blockfrost.Block{Blockfrost._blockHash=bh, Blockfrost._blockSlot=Ju
   , tipBlockId = BlockId (either (error . show) id $ Base16.decode $ Data.ByteString.Char8.pack $ Data.Text.unpack $ Blockfrost.unBlockHash bh)
   , tipBlockNo = BlockNumber (fromInteger bheight)
   }
--- TODO: BlockfrostChainIndexError, shouldn't happen tho
+-- TODO: BlockfrostChainIndexError, shouldn't happen except for genesis block
 bfBlockToTip _ = error "slot or blockHeight is Nothing"
 
 getTip :: (LastMember IO effs, Member BeamEffect effs, Members ClientEffects effs) => Eff effs Tip
 getTip = comparingResponses getTip' getTipB
---getTip = do
---  x <- bfBlockToTip <$> Blockfrost.getLatestBlock
---  x' <- getTip'
---  liftIO $ do
---    putStrLn "Blockfrost"
---    print x
---    putStrLn "Local node"
---    print x'
---  return x
 
 comparingResponses
   :: (Eq a, Show a, LastMember IO effs, Member BeamEffect effs, Members ClientEffects effs)
@@ -168,25 +159,17 @@ getDatumFromHash' = queryOne . queryKeyValue datumRows _datumRowHash _datumRowDa
 
 getDatumFromHash :: (LastMember IO effs, Members ClientEffects effs) => DatumHash -> Eff effs (Maybe Datum)
 getDatumFromHash x = do
-  eres <- catchError @BlockfrostError (Right <$> (Blockfrost.getScriptDatum $ Blockfrost.DatumHash $ Data.Text.pack $ show x))
-    (\e -> pure $ Left e)
+  eres <- Blockfrost.tryError $ Blockfrost.getScriptDatum $ Blockfrost.DatumHash $ Data.Text.pack $ show x
   case eres of
-    Left (Blockfrost.BlockfrostNotFound) -> pure Nothing
-    -- TODO: rethrow as part of our custom BlockfrostChainIndexError
-    -- Left _ -> pure Nothing
+    Left Blockfrost.BlockfrostNotFound -> pure Nothing
+    Left e -> throwError e
     Right (Blockfrost.ScriptDatum sdt) -> do
---  Blockfrost.ScriptDatum sdt <- Blockfrost.getScriptDatum $ Blockfrost.DatumHash $ Data.Text.pack $ show x
       case Api.scriptDataFromJson Api.ScriptDataJsonDetailedSchema sdt of
             Right dec -> do
-              --liftIO $ print dec
-              --liftIO $ print $ Api.toPlutusData dec
-              --return $ PlutusTx.fromBuiltinData $ PlutusTx.dataToBuiltinData $ Api.toPlutusData dec
               case PlutusTx.fromBuiltinData $ PlutusTx.dataToBuiltinData $ Api.toPlutusData dec of
                 Just x -> return $ pure x
                 Nothing -> return $ Nothing
             Left err -> error $ show ("transcoding error:", err)
-
-  --error $ show ("YAY", res) -- queryOne . queryKeyValue datumRows _datumRowHash _datumRowDatum
 
 getTxFromTxId :: Member BeamEffect effs => TxId -> Eff effs (Maybe ChainIndexTx)
 getTxFromTxId = queryOne . queryKeyValue txRows _txRowTxId _txRowTx
@@ -194,12 +177,10 @@ getTxFromTxId = queryOne . queryKeyValue txRows _txRowTxId _txRowTx
 getScriptFromHash :: (LastMember IO effs, Members ClientEffects effs) => ValidatorHash -> Eff effs (Maybe Validator)
 getScriptFromHash x = do
   let hash = Blockfrost.ScriptHash $ Data.Text.pack $ show x
-  eres <- catchError @BlockfrostError (Right <$> Blockfrost.getScript hash) 
-    (\e -> pure $ Left e)
+  eres <- Blockfrost.tryError $ Blockfrost.getScript hash
   case eres of
-    Left (Blockfrost.BlockfrostNotFound) -> pure Nothing
-    -- TODO: rethrow as part of our custom BlockfrostChainIndexError
-    -- Left _ -> pure Nothing
+    Left Blockfrost.BlockfrostNotFound -> pure Nothing
+    Left e -> throwError e
     --Right (Blockfrost.Script{..} ) -> do
     Right (_scr) -> do
       -- TODO: assert that it is plututs type script
@@ -215,9 +196,6 @@ getScriptFromHash x = do
             case n of
               Left ex -> error $ show ("no des", ex)
               Right x -> return $ pure $ Validator x
-            --error $ show ("yay", sbs, n)
-  --case eres of
-
 
 getScriptFromHash' ::
     ( Member BeamEffect effs
@@ -313,11 +291,8 @@ getTxOutFromRef ref@TxOutRef{txOutRefId, txOutRefIdx} = do
     -- PV1Api.fromBuiltin txOutRefId
   liftIO $ print ("hash", hash)
   eres <- Blockfrost.tryError $ Blockfrost.getTxUtxos hash -- (Blockfrost.TxHash txOutRefId)
-  --eres <- catchError @BlockfrostError (Right <$> Blockfrost.getScript hash) 
   case eres of
     Left (Blockfrost.BlockfrostNotFound) -> pure Nothing
-    -- TODO: rethrow as part of our custom BlockfrostChainIndexError
-    -- Left _ -> pure Nothing
     --Right (Blockfrost.Script{..} ) -> do
     Right res -> do
       let out = filter ((==txOutRefIdx) . view Blockfrost.outputIndex) (res ^. Blockfrost.outputs)
@@ -327,7 +302,9 @@ getTxOutFromRef ref@TxOutRef{txOutRefId, txOutRefIdx} = do
       liftIO $ print addrs
       liftIO $ print (map (Cardano.Address.fromBech32 . Blockfrost.unAddress) addrs)
       liftIO $ print (map (Cardano.Address.Style.Shelley.eitherInspectAddress Nothing . maybe (error "no fromBech32") id . Cardano.Address.fromBech32 . Blockfrost.unAddress) addrs)
-      liftIO $ print $ map (\x -> map amountToValue $ x ^. Blockfrost.amount) out
+      liftIO $ print $ mconcat $ mconcat $ map (\x -> map amountToValue $ x ^. Blockfrost.amount) out
+      x <- getTxOutFromRef' ref
+      liftIO $ print x
       getTxOutFromRef' ref
   -- if datumHash then
   -- getDatumFromHash
@@ -341,8 +318,6 @@ getTxOutFromRef ref@TxOutRef{txOutRefId, txOutRefIdx} = do
   ---- pure $ PublicKeyChainIndexTxOut { _ciTxOutAddress :: Address
   ---- 79   │                              , _ciTxOutValue   :: Value
   ---- 80   │                              }
-
-
 
 amountToValue (Blockfrost.AdaAmount disc) = Ada.lovelaceValueOf $ Money.someDiscreteAmount $ Money.toSomeDiscrete disc
 amountToValue (Blockfrost.AssetAmount someDisc) =
