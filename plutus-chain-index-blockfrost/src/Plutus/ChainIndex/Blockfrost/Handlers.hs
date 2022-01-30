@@ -20,7 +20,7 @@ module Plutus.ChainIndex.Blockfrost.Handlers
 
 import Cardano.Api qualified as C
 import Control.Applicative (Const (..))
-import Control.Lens (Lens', _Just, ix, view, (^?))
+import Control.Lens (Lens', _Just, ix, view, (^?), (^.))
 import Control.Monad.Freer (Eff, Member, Members, type (~>), LastMember)
 import Control.Monad.Freer.Error (Error, throwError, catchError)
 import Control.Monad.Freer.Extras.Beam (BeamEffect (..), BeamableSqlite, addRowsInBatches, combined, deleteRows,
@@ -45,7 +45,7 @@ import Database.Beam.Query (HasSqlEqualityCheck, asc_, desc_, exists_, orderBy_,
 import Database.Beam.Schema.Tables (zipTables)
 import Database.Beam.Sqlite (Sqlite)
 import Ledger (Address (..), ChainIndexTxOut (..), Datum, DatumHash (..), TxId (..), TxOut (..), TxOutRef (..), ValidatorHash (..), Validator (..), Slot(..))
-import Ledger.Value (AssetClass (AssetClass), flattenValue)
+import Ledger.Value (AssetClass (AssetClass), flattenValue, singleton)
 import Plutus.ChainIndex.Api (IsUtxoResponse (IsUtxoResponse), TxosResponse (TxosResponse),
                               UtxosResponse (UtxosResponse))
 import Plutus.ChainIndex.ChainIndexError (ChainIndexError (..))
@@ -61,6 +61,7 @@ import Plutus.ChainIndex.UtxoState (InsertUtxoSuccess (..), RollbackResult (..),
 import Plutus.ChainIndex.UtxoState qualified as UtxoState
 import Plutus.V1.Ledger.Ada qualified as Ada
 import Plutus.V1.Ledger.Api (Credential (PubKeyCredential, ScriptCredential))
+import qualified Plutus.V1.Ledger.Api as PV1Api
 
 import Blockfrost.Freer.Client (BlockfrostError, ClientEffects)
 import Blockfrost.Freer.Client qualified as BFC
@@ -81,6 +82,12 @@ import Data.ByteString.Short qualified as BS
 
 import Control.Monad.IO.Class
 
+import qualified Money
+
+import Data.String (fromString)
+
+import qualified Cardano.Address
+import qualified Cardano.Address.Style.Shelley
 
 type ChainIndexState = UtxoIndex TxUtxoBalance
 
@@ -243,7 +250,7 @@ queryList ::
 queryList = fmap (fmap fromDbValue) . selectList
 
 -- | Get the 'ChainIndexTxOut' for a 'TxOutRef'.
-getTxOutFromRef ::
+getTxOutFromRef' ::
   forall effs.
   ( Member BeamEffect effs
   , Member (LogMsg ChainIndexLog) effs
@@ -252,7 +259,7 @@ getTxOutFromRef ::
   )
   => TxOutRef
   -> Eff effs (Maybe ChainIndexTxOut)
-getTxOutFromRef ref@TxOutRef{txOutRefId, txOutRefIdx} = do
+getTxOutFromRef' ref@TxOutRef{txOutRefId, txOutRefIdx} = do
   mTx <- getTxFromTxId txOutRefId
   -- Find the output in the tx matching the output ref
   case mTx ^? _Just . citxOutputs . _ValidTx . ix (fromIntegral txOutRefIdx) of
@@ -273,6 +280,65 @@ getTxOutFromRef ref@TxOutRef{txOutRefId, txOutRefIdx} = do
                 v <- maybe (Left vh) Right <$> getScriptFromHash vh
                 d <- maybe (Left dh) Right <$> getDatumFromHash dh
                 pure $ Just $ ScriptChainIndexTxOut (txOutAddress txout) v d (txOutValue txout)
+
+-- | Get the 'ChainIndexTxOut' for a 'TxOutRef'.
+getTxOutFromRef ::
+  forall effs.
+  ( Member (LogMsg ChainIndexLog) effs
+  , Members ClientEffects effs
+  , LastMember IO effs
+  -- TMP
+  , Member BeamEffect effs
+  )
+  => TxOutRef
+  -> Eff effs (Maybe ChainIndexTxOut)
+getTxOutFromRef ref@TxOutRef{txOutRefId, txOutRefIdx} = do
+  let hash = Blockfrost.TxHash $ Data.Text.pack $ show txOutRefId
+    -- PV1Api.fromBuiltin txOutRefId
+  liftIO $ print ("hash", hash)
+  eres <- Blockfrost.tryError $ Blockfrost.getTxUtxos hash -- (Blockfrost.TxHash txOutRefId)
+  --eres <- catchError @BlockfrostError (Right <$> Blockfrost.getScript hash) 
+  case eres of
+    Left (Blockfrost.BlockfrostNotFound) -> pure Nothing
+    -- TODO: rethrow as part of our custom BlockfrostChainIndexError
+    -- Left _ -> pure Nothing
+    --Right (Blockfrost.Script{..} ) -> do
+    Right res -> do
+      let out = filter ((==txOutRefIdx) . view Blockfrost.outputIndex) (res ^. Blockfrost.outputs)
+      liftIO $ print out
+      let addrs = map (\x -> x ^. Blockfrost.address) out
+
+      liftIO $ print addrs
+      liftIO $ print (map (Cardano.Address.fromBech32 . Blockfrost.unAddress) addrs)
+      liftIO $ print (map (Cardano.Address.Style.Shelley.eitherInspectAddress Nothing . maybe (error "no fromBech32") id . Cardano.Address.fromBech32 . Blockfrost.unAddress) addrs)
+      liftIO $ print $ map (\x -> map amountToValue $ x ^. Blockfrost.amount) out
+      getTxOutFromRef' ref
+  -- if datumHash then
+  -- getDatumFromHash
+  -- getScriptFromHash
+  ---- 81   │   | ScriptChainIndexTxOut { _ciTxOutAddress   :: Address
+  ---- 82   │                           , _ciTxOutValidator :: Either ValidatorHash Validator
+  ---- 83   │                           , _ciTxOutDatum     :: Either DatumHash Datum
+  ---- 84   │                           , _ciTxOutValue     :: Value
+  ---- 85   │                           }
+  -- else
+  ---- pure $ PublicKeyChainIndexTxOut { _ciTxOutAddress :: Address
+  ---- 79   │                              , _ciTxOutValue   :: Value
+  ---- 80   │                              }
+
+
+
+amountToValue (Blockfrost.AdaAmount disc) = Ada.lovelaceValueOf $ Money.someDiscreteAmount $ Money.toSomeDiscrete disc
+amountToValue (Blockfrost.AssetAmount someDisc) = 
+  singleton (fromString curSym) (fromString tok) $ Money.someDiscreteAmount someDisc
+  where
+    (curSym, tok) = decodePolicyToken $ Money.someDiscreteCurrency someDisc
+
+decodePolicyToken concatenated =
+  let
+    curSym = Data.Text.unpack $ Data.Text.take 56 concatenated
+    tok = Data.ByteString.Char8.unpack $ either (error . show) id $ Base16.decode $ Data.ByteString.Char8.pack  $Data.Text.unpack $ Data.Text.drop 56 concatenated
+  in (curSym, tok)
 
 getUtxoSetAtAddress
   :: forall effs.

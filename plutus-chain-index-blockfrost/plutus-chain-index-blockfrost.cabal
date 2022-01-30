@@ -39,6 +39,7 @@ library
   build-depends:       base >= 4.7 && < 5
                      , aeson
                      , plutus-chain-index-core
+                     , cardano-addresses
                      , cardano-api
                      , plutus-ledger-api
                      , plutus-tx
@@ -49,6 +50,7 @@ library
                      , mtl
                      , freer-simple
                      , freer-extras
+                     , safe-money
                      , servant
                      , servant-server
                      , warp
