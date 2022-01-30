@@ -80,6 +80,7 @@ import Data.ByteString.Base16 qualified as Base16
 import Data.ByteString.Lazy qualified as BL
 import Data.ByteString.Short qualified as BS
 
+import Control.Monad
 import Control.Monad.IO.Class
 
 import qualified Money
@@ -128,16 +129,8 @@ handleQuery = \case
 getTip' :: Member BeamEffect effs => Eff effs Tip
 getTip' = fmap fromDbValue . selectOne . select $ limit_ 1 (orderBy_ (desc_ . _tipRowSlot) (all_ (tipRows db)))
 
-getTip :: (LastMember IO effs, Member BeamEffect effs, Members ClientEffects effs) => Eff effs Tip
-getTip = do
-  x <- bfBlockToTip <$> Blockfrost.getLatestBlock
-  x' <- getTip'
-  liftIO $ do
-    putStrLn "Blockfrost"
-    print x
-    putStrLn "Local node"
-    print x'
-  return x
+getTipB :: (LastMember IO effs, Member BeamEffect effs, Members ClientEffects effs) => Eff effs Tip
+getTipB = bfBlockToTip <$> Blockfrost.getLatestBlock
 
 bfBlockToTip Blockfrost.Block{Blockfrost._blockHash=bh, Blockfrost._blockSlot=Just (Blockfrost.Slot bs), Blockfrost._blockHeight=Just bheight} = Tip {
     tipSlot = Slot bs
@@ -146,6 +139,29 @@ bfBlockToTip Blockfrost.Block{Blockfrost._blockHash=bh, Blockfrost._blockSlot=Ju
   }
 -- TODO: BlockfrostChainIndexError, shouldn't happen tho
 bfBlockToTip _ = error "slot or blockHeight is Nothing"
+
+getTip :: (LastMember IO effs, Member BeamEffect effs, Members ClientEffects effs) => Eff effs Tip
+getTip = comparingResponses getTip' getTipB
+--getTip = do
+--  x <- bfBlockToTip <$> Blockfrost.getLatestBlock
+--  x' <- getTip'
+--  liftIO $ do
+--    putStrLn "Blockfrost"
+--    print x
+--    putStrLn "Local node"
+--    print x'
+--  return x
+
+comparingResponses
+  :: (Eq a, Show a, LastMember IO effs, Member BeamEffect effs, Members ClientEffects effs)
+  => Eff effs a
+  -> Eff effs a
+  -> Eff effs a
+comparingResponses a b = do
+  xa <- a
+  xb <- b
+  when (xa /= xb) $ liftIO $ print ("Responses differ:", xa, xb)
+  pure xa
 
 getDatumFromHash' :: Member BeamEffect effs => DatumHash -> Eff effs (Maybe Datum)
 getDatumFromHash' = queryOne . queryKeyValue datumRows _datumRowHash _datumRowDatum
