@@ -147,14 +147,19 @@ getTip :: (LastMember IO effs, Member BeamEffect effs, Members ClientEffects eff
 getTip = comparingResponses getTip' getTipB
 
 comparingResponses
-  :: (Eq a, Show a, LastMember IO effs, Member BeamEffect effs, Members ClientEffects effs)
+  :: (Eq a, Show a, LastMember IO effs)
   => Eff effs a
   -> Eff effs a
   -> Eff effs a
 comparingResponses a b = do
   xa <- a
   xb <- b
-  when (xa /= xb) $ liftIO $ print ("Responses differ:", xa, xb)
+  when (xa /= xb) $ liftIO $ do
+    putStrLn "Responses differ"
+    putStrLn "Response A"
+    print xa
+    putStrLn "Response B"
+    print xb
   pure xa
 
 getDatumFromHash' :: Member BeamEffect effs => DatumHash -> Eff effs (Maybe Datum)
