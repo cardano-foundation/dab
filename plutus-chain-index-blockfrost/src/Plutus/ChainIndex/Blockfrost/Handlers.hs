@@ -47,7 +47,7 @@ import Database.Beam.Sqlite (Sqlite)
 import Ledger (Address (..), ChainIndexTxOut (..), Datum, DatumHash (..), TxId (..), TxOut (..), TxOutRef (..), ValidatorHash (..), Validator (..), Slot(..))
 import Ledger.Crypto (PubKeyHash(..))
 import Ledger.Credential (Credential (PubKeyCredential), StakingCredential (StakingHash))
-import Ledger.Value (AssetClass (AssetClass), flattenValue, singleton, currencySymbol, tokenName)
+import Ledger.Value (AssetClass (AssetClass), CurrencySymbol, TokenName, Value, flattenValue, singleton, currencySymbol, tokenName)
 import Plutus.ChainIndex.Api (IsUtxoResponse (IsUtxoResponse), TxosResponse (TxosResponse),
                               UtxosResponse (UtxosResponse))
 import Plutus.ChainIndex.ChainIndexError (ChainIndexError (..))
@@ -69,6 +69,7 @@ import Blockfrost.Freer.Client qualified as BFC
 import Blockfrost.Freer.Client qualified as Blockfrost
 
 -- conversions
+import Data.Text (Text)
 import qualified Data.ByteString.Char8
 import qualified Data.Text
 import qualified Data.Text.Encoding
@@ -310,7 +311,6 @@ getTxOutFromRefB ::
   -> Eff effs (Maybe ChainIndexTxOut)
 getTxOutFromRefB ref@TxOutRef{txOutRefId, txOutRefIdx} = do
   let hash = Blockfrost.TxHash $ Data.Text.pack $ show txOutRefId
-  liftIO $ print ("hash", hash)
   eres <- Blockfrost.tryError $ Blockfrost.getTxUtxos hash
   case eres of
     Left Blockfrost.BlockfrostNotFound -> logWarn (TxOutNotFound ref) >> pure Nothing
@@ -348,15 +348,12 @@ getTxOutFromRefB ref@TxOutRef{txOutRefId, txOutRefIdx} = do
                   v <- maybe (Left vh) Right <$> getScriptFromHashB vh
                   d <- maybe (Left dh) Right <$> getDatumFromHashB dh
 
-                  pure $ Just $ ScriptChainIndexTxOut {
-                      _ciTxOutAddress = Address {
+                  let plutusAddr = Address {
                         addressCredential = ScriptCredential vh
                       , addressStakingCredential = Nothing
                       }
-                    , _ciTxOutValidator = v
-                    , _ciTxOutDatum = d
-                    , _ciTxOutValue = txoValue
-                    }
+
+                  pure $ Just $ ScriptChainIndexTxOut plutusAddr v d txoValue
 
             Left e -> error $ "Error inspecting address " ++ show e
             o -> error $ "Unexpected inspect address result " ++ show o
@@ -373,16 +370,23 @@ getTxOutFromRef
 getTxOutFromRef =
  liftM2 comparingResponses getTxOutFromRef' getTxOutFromRefB
 
+amountToValue :: Blockfrost.Amount -> Value
 amountToValue (Blockfrost.AdaAmount disc) = Ada.lovelaceValueOf $ Money.someDiscreteAmount $ Money.toSomeDiscrete disc
 amountToValue (Blockfrost.AssetAmount someDisc) =
-  singleton (currencySymbol curSym) (tokenName tok) $ Money.someDiscreteAmount someDisc
+  singleton curSym tok $ Money.someDiscreteAmount someDisc
   where
     (curSym, tok) = decodePolicyToken $ Money.someDiscreteCurrency someDisc
 
+decodePolicyToken :: Text -> (CurrencySymbol, TokenName)
 decodePolicyToken concatenated =
   let
-    curSym = either (error . show) id $ Base16.decode $ Data.ByteString.Char8.pack $ Data.Text.unpack $ Data.Text.take 56 concatenated
-    tok = either (error . show) id $ Base16.decode $ Data.ByteString.Char8.pack $ Data.Text.unpack $ Data.Text.drop 56 concatenated
+    cb = Data.ByteString.Char8.pack $ Data.Text.unpack concatenated
+    curSym = currencySymbol
+      $ either (error . show) id
+      $ Base16.decode $ Data.ByteString.Char8.take 56 cb
+    tok = tokenName
+      $ either (error . show) id
+      $ Base16.decode $ Data.ByteString.Char8.drop 56 cb
   in (curSym, tok)
 
 getUtxoSetAtAddress
