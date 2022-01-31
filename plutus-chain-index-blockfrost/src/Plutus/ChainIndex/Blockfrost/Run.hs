@@ -23,7 +23,7 @@ import Plutus.ChainIndex.TxOutBalance as Export hiding (fromBlock, fromTx, isSpe
 import Plutus.ChainIndex.Types as Export
 import Plutus.ChainIndex.UtxoState as Export
 
-import Cardano.BM.Trace (Trace)
+--import Cardano.BM.Trace (Trace)
 import Control.Concurrent.MVar (MVar, putMVar, takeMVar)
 import Control.Monad.Freer (Eff, LastMember, Member, interpret)
 import Control.Monad.Freer.Error (handleError, runError, throwError)
@@ -33,10 +33,10 @@ import Control.Monad.Freer.Extras.Modify (raiseEnd, raiseMUnderN)
 import Control.Monad.Freer.Reader (runReader)
 import Control.Monad.Freer.State (runState)
 import Control.Monad.IO.Class (liftIO)
-import Database.SQLite.Simple qualified as Sqlite
+--import Database.SQLite.Simple qualified as Sqlite
 import Plutus.Monitoring.Util (convertLog, runLogEffects)
 
-import Blockfrost.Freer.Client qualified as BFC
+import Blockfrost.Freer.Client qualified as Blockfrost
 
 ---- | The required arguments to run the chain index effects.
 --data RunRequirements = RunRequirements
@@ -63,32 +63,32 @@ handleChainIndexEffects
     -> Eff (ChainIndexQueryEffect ': ChainIndexControlEffect ': BeamEffect ': effs) a
     -> Eff effs (Either ChainIndexError a)
 handleChainIndexEffects RunRequirements{trace, stateMVar, conn, securityParam} action = do
-    --prj <- liftIO $ BFC.projectFromEnv
-    --cEnv <- liftIO $ BFC.newEnvByProject prj
-    bfcHandler <- liftIO $ BFC.defaultBlockfrostHandler
+    blockfrostClientHandler <- liftIO $ Blockfrost.defaultBlockfrostHandler
     state <- liftIO $ takeMVar stateMVar
+    -- Result changes from ->
     -- Either ChainIndexError a
-    -- ->
+    -- to ->
     -- Either ChainIndexError (Either BlockfrostError a))
+    -- later translate to one using handleError
     (result, newState) <-
         runState state
         $ runReader conn
         $ runReader (Depth securityParam)
         $ runError @ChainIndexError
         $ flip handleError (throwError . BeamEffectError)
-        -- $ BFC.handleBlockfrostClientEffects @IO prj cEnv
-        $ bfcHandler
+        $ blockfrostClientHandler
         $ interpret (handleBeam (convertLog BeamLogItem trace))
         $ interpret handleControl
         $ interpret handleQuery
         -- Insert the 5 effects needed by the handlers of the 3 chain index effects between those 3 effects and 'effs'.
         -- $ raiseMUnderN @[_,_,_,_,_] @[_,_,_] action
+        -- ->
         -- Insert the 7 effects needed by the handlers of the 3 chain index effects between those 3 effects and 'effs'.
         -- Blockfrost ClientEffects add two more - Reader ClientConfig and Error BlockfrostError
          $ raiseMUnderN @[_,_,_,_,_,_,_] @[_,_,_] action
     liftIO $ putMVar stateMVar newState
     pure $ case result of
       Left ciE -> Left ciE
-      Right (Left bfE) -> error $ show ("got blockfrost error", bfE)
+      Right (Left bfE) -> error $ "Got blockfrost error" ++ show bfE
       Right (Right ok) -> Right ok
     --pure result

@@ -65,14 +65,12 @@ import Plutus.V1.Ledger.Ada qualified as Ada
 import Plutus.V1.Ledger.Api (Credential (PubKeyCredential, ScriptCredential))
 
 import Blockfrost.Freer.Client (BlockfrostError, ClientEffects)
-import Blockfrost.Freer.Client qualified as BFC
 import Blockfrost.Freer.Client qualified as Blockfrost
 
 -- conversions
 import Data.Text (Text)
 import qualified Data.ByteString.Char8
 import qualified Data.Text
-import qualified Data.Text.Encoding
 import qualified Cardano.Api.Shelley as Api
 import qualified PlutusTx
 import qualified PlutusTx.Prelude
@@ -133,9 +131,10 @@ handleQuery = \case
 getTip' :: Member BeamEffect effs => Eff effs Tip
 getTip' = fmap fromDbValue . selectOne . select $ limit_ 1 (orderBy_ (desc_ . _tipRowSlot) (all_ (tipRows db)))
 
-getTipB :: (LastMember IO effs, Member BeamEffect effs, Members ClientEffects effs) => Eff effs Tip
+getTipB :: (LastMember IO effs, Members ClientEffects effs) => Eff effs Tip
 getTipB = bfBlockToTip <$> Blockfrost.getLatestBlock
 
+bfBlockToTip :: Blockfrost.Block -> Tip
 bfBlockToTip Blockfrost.Block{Blockfrost._blockHash=bh, Blockfrost._blockSlot=Just (Blockfrost.Slot bs), Blockfrost._blockHeight=Just bheight} = Tip {
     tipSlot = Slot bs
   , tipBlockId = BlockId (either (error . show) id $ Base16.decode $ Data.ByteString.Char8.pack $ Data.Text.unpack $ Blockfrost.unBlockHash bh)
@@ -184,7 +183,7 @@ getDatumFromHashB dh = do
               case PlutusTx.fromBuiltinData $ PlutusTx.dataToBuiltinData $ Api.toPlutusData dec of
                 Just x -> return $ pure x
                 Nothing -> return $ Nothing
-            Left err -> error $ show ("transcoding error:", err)
+            Left err -> error $ "Datum transcoding error:" ++ show err
 
 getDatumFromHash :: (LastMember IO effs, Member BeamEffect effs, Members ClientEffects effs) => DatumHash -> Eff effs (Maybe Datum)
 getDatumFromHash =
@@ -211,17 +210,17 @@ getScriptFromHashB vh = do
     Right (_scr) -> do
       -- TODO: assert that it is plututs type script
       Blockfrost.ScriptCBOR b16cbor <- Blockfrost.getScriptCBOR hash
-      -- error $ show ("script", _scr, "cbor", b16cbor)
       case Base16.decode . Data.ByteString.Char8.pack . Data.Text.unpack <$> b16cbor of
         Nothing -> undefined
         Just x -> case x of
-          Left e -> error $ show ("b16 dec failed", e)
+          Left e -> error $ "Can't Base16 decode script CBOR " ++ show e
           Right dec -> do
             let Right (Api.PlutusScriptSerialised sbs) = Api.deserialiseFromCBOR (Api.AsPlutusScript Api.AsPlutusScriptV1) dec
             let n = CBOR.deserialiseOrFail $ BL.fromStrict $ BS.fromShort sbs
             case n of
-              Left ex -> error $ show ("no des", ex)
-              Right x -> return $ pure $ Validator x
+              Left ex -> error $ "Can't CBOR deserialise script " ++ show ex
+              Right v -> return $ pure $ Validator v
+
 
 getScriptFromHash' ::
     ( Member BeamEffect effs
