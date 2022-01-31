@@ -140,8 +140,7 @@ bfBlockToTip Blockfrost.Block{Blockfrost._blockHash=bh, Blockfrost._blockSlot=Ju
   , tipBlockId = BlockId (either (error . show) id $ Base16.decode $ Data.ByteString.Char8.pack $ Data.Text.unpack $ Blockfrost.unBlockHash bh)
   , tipBlockNo = BlockNumber (fromInteger bheight)
   }
--- TODO: BlockfrostChainIndexError, shouldn't happen except for genesis block
-bfBlockToTip _ = error "slot or blockHeight is Nothing"
+bfBlockToTip _ = TipAtGenesis
 
 getTip :: (LastMember IO effs, Member BeamEffect effs, Members ClientEffects effs) => Eff effs Tip
 getTip = comparingResponses getTip' getTipB
