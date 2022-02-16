@@ -1,0 +1,120 @@
+cabal-version:       2.2
+name:                chain-watcher
+version:             0.1.0.0
+synopsis:            Chain watcher
+description:         TODO
+homepage:            https://github.com/cardano-foundation/dab
+license:             Apache-2.0
+license-file:        LICENSE
+author:              blockfrost.io
+maintainer:          srk@48.io
+copyright:           2022 blockfrost.io
+category:            Cardano
+build-type:          Simple
+
+extra-source-files:
+    CHANGELOG.md
+    LICENSE
+    README.md
+
+flag Examples
+     Default: False
+     Description: Build examples
+
+flag Production
+     Default: False
+     Description: Production build
+
+common libstuff
+  default-language:    Haskell2010
+  default-extensions:
+    DataKinds
+    DeriveAnyClass
+    DeriveGeneric
+    DerivingVia
+    GADTs
+    GeneralizedNewtypeDeriving
+    FlexibleContexts
+    FlexibleInstances
+    InstanceSigs
+    LambdaCase
+    MultiParamTypeClasses
+    RankNTypes
+    ScopedTypeVariables
+    TemplateHaskell
+    TypeApplications
+    TypeFamilies
+    TypeOperators
+    ViewPatterns
+    OverloadedStrings
+  ghc-options:         -Wall -Wunused-packages
+  if flag(Production)
+    ghc-options: -Werror
+
+library
+   import:              libstuff
+   hs-source-dirs:      src
+   exposed-modules:     ChainWatcher
+                      , ChainWatcher.Types
+                      , Control.Monad.Freer.Log
+                      , Control.Monad.Freer.Time
+   build-depends:       base >= 4.7 && < 5
+                      , blockfrost-freer-client
+                      , co-log-core
+                      , aeson
+                      , freer-simple
+                      , async
+                      , lens
+                      , stm
+                      , text
+                      , pretty-simple
+                      , containers
+                      , mtl
+                      , servant
+                      , servant-server
+                      , time
+                      , uuid
+		      -- streams
+                      , servant-event-stream
+                      , bytestring
+                      , wai
+                      , wai-cors
+                      , wai-extra
+                      , warp
+                      , pipes
+                      --, servant-client        ^>= 0.18
+
+executable chain-watcher-blockfrost
+  hs-source-dirs:      app
+  main-is:             Main.hs
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  build-depends:       base
+                     , chain-watcher
+                     , freer-simple
+  default-language:    Haskell2010
+
+test-suite chain-watcher-tests
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      test
+  main-is:             Spec.hs
+  other-modules:       ClientStateSpec
+  build-depends:       base >= 4.7 && < 5
+                     , chain-watcher
+                     , containers
+                     , bytestring
+                     , text
+                     , uuid
+                     , hspec
+                     , tasty
+                     , tasty-quickcheck
+                     , tasty-hspec
+                     , tasty-hunit
+		     -- temp
+                     , blockfrost-freer-client
+  build-tool-depends:
+    tasty-discover:tasty-discover
+  default-language:    Haskell2010
+
+source-repository head
+  type:     git
+  location: https://github.com/cardano-foundation/dab
