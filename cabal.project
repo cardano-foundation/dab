@@ -1,0 +1,19 @@
+packages:
+  ./blockfrost-freer-client
+  ./chain-watcher
+
+-- until v0.3.1 is in snapshot
+source-repository-package
+    type: git
+    location: https://github.com/blockfrost/blockfrost-haskell
+    tag: v0.3.1.0
+    --sha256: 0hjrzhsvcy1q5aai6srdjvh0cs5clbhbdkclf1ly7zj4w11agrkl
+    subdir:
+      blockfrost-api
+      blockfrost-client
+
+source-repository-package
+    type: git
+    location: https://github.com/bflyblue/servant-event-stream
+    tag: 7dcb2b3b82882b1ea4c7876e7e5e7ba6556e606a
+    --sha256: 04h6xv51if2ki8qgk12wc7avfj9jip0ixh92qd5hxmjnfx072m2d
