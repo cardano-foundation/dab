@@ -1,0 +1,13 @@
+attic/*
+dist
+dist-newstyle
+result*
+.stack-work
+.ghc.environment*
+cabal.project.local
+swagger.json
+swagger.yaml
+*.swp
+*.swo
+*.log
+*.old
