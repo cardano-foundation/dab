@@ -202,11 +202,14 @@ watch = do
                   getTime >>= \t -> tell [(rd, newEventDetail rd t evt)]
 
             forM (Data.Set.toList reqs) $ \req -> do
-              case requestDetailRequest req of
+              let unRecurring (Recurring r) = r
+                  unRecurring r = r
+
+              case unRecurring $ requestDetailRequest req of
                 AddressFundsRequest a | a `Data.Set.member` addrs -> do
                   handleRequest req $ AddressFundsChanged a
 
-                Recurring Ping -> do
+                Ping -> do
                   handleRequest req $ Pong blockSlot
 
                 _ -> pure ()
