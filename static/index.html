@@ -1,0 +1,71 @@
+<!doctype html>
+<head>
+  <title>DAB SSE Example</title>
+</head>
+<h1>DAB Server-Sent Events demo</h1>
+
+<div id="output"></div>
+
+<script>
+  var output = document.getElementById("output");
+  console.log("Load");
+
+  var url = "/clients/new";
+  var xhr = new XMLHttpRequest();
+  xhr.open("POST", url);
+  xhr.setRequestHeader("Accept", "application/json");
+  xhr.setRequestHeader("Content-Type", "application/json");
+  xhr.send();
+
+  xhr.onreadystatechange = function () {
+    if (xhr.readyState === 4) {
+      uid = JSON.parse(xhr.responseText);
+      console.log(uid);
+
+      // send recurring address change request
+      var xhrs = new XMLHttpRequest();
+      xhrs.open("POST", "/clients/request/" + uid);
+      xhrs.setRequestHeader("Accept", "application/json");
+      xhrs.setRequestHeader("Content-Type", "application/json");
+      xhrs.send(`{"contents":{"contents":"addr_test1wpjduy92cj4dqzs6y5refxphskru3kfgyhchyg7u7nadt8qqfddxd","tag":"AddressFundsRequest"},"tag":"Recurring"}`);
+
+      // and another non-recurring address change request
+      var xhrs2 = new XMLHttpRequest();
+      xhrs2.open("POST", "/clients/request/" + uid);
+      xhrs2.setRequestHeader("Accept", "application/json");
+      xhrs2.setRequestHeader("Content-Type", "application/json");
+      xhrs2.send(`{"contents":{"contents":"addr_test1wpzjtlyp6v4qx6gzjm4zc7lsdufw597507y060qhk84vpjsjd625n","tag":"AddressFundsRequest"},"tag":"Recurring"}`);
+      //minswap?
+      //xhrs2.send(`{"contents":"addr_test1wphyve8r76kvfr5yn6k0fcmq0mn2uf6c6mvtsrafmr7awcg0vnzpg","tag":"AddressFundsRequest"}`);
+
+      // another random active script address
+      // {"contents":"addr_test1wpzjtlyp6v4qx6gzjm4zc7lsdufw597507y060qhk84vpjsjd625n","tag":"AddressFundsRequest"}
+
+      // start sse
+      var src = new EventSource("/sse/" + uid);
+      console.log(src);
+      src.onopen = function() {
+        console.log("Connection to server opened.");
+      };
+
+      src.onerror = function() {
+        console.log("On error called");
+      }
+
+      src.addEventListener("Pong", function(evt) {
+        console.log(evt);
+
+        var p = document.createElement("p");
+        p.appendChild(document.createTextNode(evt.data));
+        output.prepend(p);
+      });
+
+      src.addEventListener("AddressFundsChanged", function(evt) {
+        console.log(evt);
+
+        var p = document.createElement("p");
+        p.appendChild(document.createTextNode(evt.data));
+        output.prepend(p);
+      });
+  }};
+</script>
