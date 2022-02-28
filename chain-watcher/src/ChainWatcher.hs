@@ -204,10 +204,7 @@ watch = do
                   getTime >>= \t -> tell [(rd, newEventDetail rd t evt)]
 
             forM (Data.Set.toList reqs) $ \req -> do
-              let unRecurring (Recurring r) = r
-                  unRecurring r = r
-
-              case unRecurring $ requestDetailRequest req of
+              case unRecurring $ req ^. request of
                 AddressFundsRequest addr | addr `Data.Set.member` addrs -> do
                   handleRequest req $ AddressFundsChanged addr
 
@@ -316,25 +313,25 @@ handleNewClient = do
     pure uuid
 
 handleRemoveClient :: ClientId -> AppM ()
-handleRemoveClient clientId = do
+handleRemoveClient cid = do
   tclients <- asks serverStateClients
-  liftIO $ atomically $ modifyTVar tclients (Data.Map.delete clientId)
+  liftIO $ atomically $ modifyTVar tclients (Data.Map.delete cid)
 
 handleNewRequest :: ClientId -> Request -> AppM Integer
-handleNewRequest clientId request = do
+handleNewRequest cid req = do
   tclients <- asks serverStateClients
 
   t <- liftIO getPOSIXTime
   let rd = RequestDetail {
          requestDetailRequestId = 0
-       , requestDetailClientId = clientId
-       , requestDetailRequest = request
+       , requestDetailClientId = cid
+       , requestDetailRequest = req
        , requestDetailTime = t
        }
 
   res <- liftIO $ atomically $ do
     clients <- readTVar tclients
-    case Data.Map.lookup clientId clients of
+    case Data.Map.lookup cid clients of
       Nothing -> pure Nothing
       Just c -> do
         let nextId = succ $ clientStateLastId c
@@ -347,30 +344,30 @@ handleNewRequest clientId request = do
 
               , clientStateLastId = nextId
               }
-        modifyTVar tclients (Data.Map.adjust (pure newC) clientId)
+        modifyTVar tclients (Data.Map.adjust (pure newC) cid)
         pure $ Just nextReq
 
   maybe
     (Servant.throwError err404)
-    (\req -> do
+    (\r -> do
        qreqs <- asks serverStateRequestQueue
-       liftIO $ atomically $ writeTQueue qreqs req
-       return (requestDetailRequestId req)
+       liftIO $ atomically $ writeTQueue qreqs r
+       return (requestDetailRequestId r)
     )
     res
 
 handleSSE :: ClientId -> AppM EventSourceHdr
-handleSSE clientId = do
+handleSSE cid = do
   tclients <- asks serverStateClients
   t <- liftIO getPOSIXTime
   res <- liftIO $ atomically $ do
     clients <- readTVar tclients
-    case Data.Map.lookup clientId clients of
+    case Data.Map.lookup cid clients of
       Nothing -> pure Nothing
       Just c -> do
         let rd = RequestDetail {
                      requestDetailRequestId = 0
-                   , requestDetailClientId = clientId
+                   , requestDetailClientId = cid
                    , requestDetailRequest = Recurring Ping
                    , requestDetailTime = t
                    }
@@ -385,7 +382,7 @@ handleSSE clientId = do
               , clientStateLastId = nextId
               }
 
-        modifyTVar tclients (Data.Map.adjust (pure newC) clientId)
+        modifyTVar tclients (Data.Map.adjust (pure newC) cid)
         pure $ Just nextReq
 
   case res of
@@ -399,11 +396,11 @@ handleSSE clientId = do
           forever $ do
             evts <- liftIO $ atomically $ do
               clients <- readTVar tclients
-              case Data.Map.lookup clientId clients of
+              case Data.Map.lookup cid clients of
                 Nothing -> pure $ pure CloseEvent
                 Just c -> do
                   let (evts, newC) = takeEvents c
-                  modifyTVar tclients (Data.Map.adjust (pure newC) clientId)
+                  modifyTVar tclients (Data.Map.adjust (pure newC) cid)
                   pure $ map eventDetailAsServerEvent evts
             forM_ evts P.yield
             liftIO $ do
@@ -431,7 +428,7 @@ mains clients qreqs = do
 eventDetailAsServerEvent :: EventDetail -> ServerEvent
 eventDetailAsServerEvent ed = addId (eventDetailEventId ed) $ eventAsServerEvent (eventDetailEvent ed)
   where
-    addId eid x@ServerEvent{} = x { eventId = Just $ integerDec eid }
+    addId eid x@ServerEvent{} = x { Network.Wai.EventSource.eventId = Just $ integerDec eid }
     addId _ x = x
 
 eventAsServerEvent :: Event -> ServerEvent

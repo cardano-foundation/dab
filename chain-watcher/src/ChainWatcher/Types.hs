@@ -1,6 +1,6 @@
 module ChainWatcher.Types where
 
-import Control.Lens (makePrisms)
+import Control.Lens (makePrisms, makeFields)
 import Control.Monad.Freer.TH ( makeEffect )
 import Data.Aeson ( FromJSON, ToJSON )
 import GHC.Generics (Generic)
@@ -41,7 +41,7 @@ data EventDetail = EventDetail {
   }
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
-makePrisms ''EventDetail
+makeFields ''EventDetail
 
 data Request =
     Ping
@@ -59,6 +59,10 @@ data Request =
 
 makePrisms ''Request
 
+unRecurring :: Request -> Request
+unRecurring (Recurring r) = r
+unRecurring r = r
+
 data RequestDetail = RequestDetail {
     requestDetailRequestId :: Integer
   , requestDetailClientId :: ClientId
@@ -67,7 +71,7 @@ data RequestDetail = RequestDetail {
   }
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
-makePrisms ''RequestDetail
+makeFields ''RequestDetail
 
 eventToRequest :: Event -> Request
 eventToRequest (Pong _s) = Ping

@@ -36,6 +36,7 @@ common libstuff
     GeneralizedNewtypeDeriving
     FlexibleContexts
     FlexibleInstances
+    FunctionalDependencies
     InstanceSigs
     LambdaCase
     MultiParamTypeClasses
