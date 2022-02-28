@@ -54,13 +54,6 @@ import ChainWatcher.Types
 main :: IO ()
 main = do
   (qreqs, qevts) <- (,) <$> newTQueueIO <*> newTQueueIO
-  {--
-  let
-      reqMin1 = AddressFundsRequest "addr_test1wpjduy92cj4dqzs6y5refxphskru3kfgyhchyg7u7nadt8qqfddxd"
-      reqMin2 = AddressFundsRequest "addr_test1wphyve8r76kvfr5yn6k0fcmq0mn2uf6c6mvtsrafmr7awcg0vnzpg"
-      -- my testnet addr
-      --    "addr_test1vp9aktzhltgk4rf72l7nr7jaarqvzdfg84nukle8qkh7g3skpzhch"
-  --}
 
   tclients <- newTVarIO mempty
   _apiAsync <- async $ mains tclients qreqs
@@ -81,16 +74,16 @@ runWatcher qreqs qevts = fix $ \loop -> do
   -- should look-up N-depth previous blocks and use Nth as startBlock
   -- in case that the one we get from getLatestBlock disappears
   case startBlock' of
-    Left _e -> loop -- error $ show ("Blockfrost error", e)
+    Left e -> error $ "Can't fetch latest block, error was " ++ show e
     Right startBlock -> do
       handleBlockfrostClient <- defaultBlockfrostHandler
       res <- runM
         . runError @WatcherError
         . runLogAction (contramap Data.Text.unpack logStringStdout)
         . runTime
-        . runState @Block startBlock
-        . runState @[Block] (pure startBlock)
-        . runState @(Set RequestDetail) mempty
+        . evalState @Block startBlock
+        . evalState @[Block] (pure startBlock)
+        . evalState @(Set RequestDetail) mempty
         . runReader @Int 10
         . handleBlockfrostClient
         . runReader @(TQueue RequestDetail) qreqs
@@ -100,6 +93,11 @@ runWatcher qreqs qevts = fix $ \loop -> do
             watch
 
       case res of
+        Right (Left (be :: BlockfrostError)) -> do
+          putStrLn $ "Exited with blockfrost error" ++ show be
+          putStrLn "Restarting"
+          Control.Concurrent.threadDelay 10_000_000
+          loop
         Right _ -> pure ()
         Left (e :: WatcherError) -> do
           putStrLn $ "Exited with error " ++ show e
@@ -194,14 +192,6 @@ watch = do
                 addrTxMap = Data.Map.fromList addrsTxs
 
             reqs <- get @(Set RequestDetail)
-            let newEventDetail rd ptime evt = EventDetail
-                        { eventDetailEventId = requestDetailRequestId rd
-                        , eventDetailClientId = requestDetailClientId rd
-                        , eventDetailEvent = evt
-                        , eventDetailTime = ptime
-                        }
-                handleRequest rd evt = do
-                  getTime >>= \t -> tell [(rd, newEventDetail rd t evt)]
 
             forM (Data.Set.toList reqs) $ \req -> do
               case unRecurring $ req ^. request of
@@ -246,6 +236,27 @@ watch = do
 
     liftIO $ do
       Control.Concurrent.threadDelay 20_000_000
+
+newEventDetail
+  :: RequestDetail
+  -> POSIXTime
+  -> Event
+  -> EventDetail
+newEventDetail rd ptime evt = EventDetail
+  { eventDetailEventId = requestDetailRequestId rd
+  , eventDetailClientId = requestDetailClientId rd
+  , eventDetailEvent = evt
+  , eventDetailTime = ptime
+  }
+
+handleRequest
+  :: ( Member Time effs
+     , Member (Writer [(RequestDetail, EventDetail)]) effs)
+  => RequestDetail
+  -> Event
+  -> Eff effs ()
+handleRequest rd evt = do
+  getTime >>= \t -> tell [(rd, newEventDetail rd t evt)]
 
 -- | Run server
 handleWatchSource
