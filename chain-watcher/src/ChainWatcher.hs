@@ -18,6 +18,7 @@ import Colog.Core.IO (logStringStdout)
 import Data.Time.Clock.POSIX
 import qualified Data.Text
 import Data.Function (fix)
+import Data.Map (Map)
 import qualified Data.Map
 
 import Control.Concurrent
@@ -84,6 +85,7 @@ runWatcher qreqs qevts = fix $ \loop -> do
         . evalState @Block startBlock
         . evalState @[Block] (pure startBlock)
         . evalState @(Set RequestDetail) mempty
+        . evalState @(Map Address [TxOutRef]) mempty
         . runReader @Int 10
         . handleBlockfrostClient
         . runReader @(TQueue RequestDetail) qreqs
@@ -127,6 +129,7 @@ watch :: forall m effs a .
   , Member (State (Set RequestDetail)) effs
   , Member (State Block) effs
   , Member (State [Block]) effs
+  , Member (State (Map Address [TxOutRef])) effs
   , Member WatchSource effs
   , Member (Log Text) effs
   , Member Time effs
@@ -160,6 +163,22 @@ watch = do
                   Just depth | depth < 10 -> do
                     handleRequest req $ TransactionTentative tx depth
                   Just _depth -> throwError $ RuntimeError "Absurd tx depth"
+
+            -- look up the address holding the utxo so we can track it in block processing loop
+            UtxoSpentRequest txoutref@(tx, txoutindex) -> do
+              etx <- tryError $ getTxUtxos tx
+              case etx of
+                Left BlockfrostNotFound -> logs @Text $ "Transaction not found for TxOutRef " <> showText txoutref
+                Left e -> rethrow e
+                Right utxos -> do
+                  let relevant = filter ((== txoutindex) . view outputIndex) (utxos ^. outputs)
+                  case relevant of
+                    [x] -> do
+                      let addr = x ^. address
+                      logs @Text $ "Adding utxo address to map of watched addresses " <> showText addr
+                      modify @(Map Address [TxOutRef]) $ Data.Map.adjust (txoutref:) addr
+
+                    _ -> logs $ "Transaction output not found" <> showText txoutref
 
             _ -> pure ()
 
