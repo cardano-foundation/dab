@@ -2,12 +2,18 @@
 
 # Usage
 
-```
+```command
 nix-shell
 export BLOCKFROST_TOKEN_PATH=~/.blockfrost.testnet.token
 cabal run chain-watcher-blockfrost
 
 # View the demo on http://localhost:8282/demo/index.html
+```
+
+## Building with nix
+
+```command
+nix-build -A chain-watcher.components.exes.chain-watcher-blockfrost
 ```
 
 # Client API
