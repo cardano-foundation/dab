@@ -29,6 +29,7 @@ import Control.Lens
 
 import Text.Pretty.Simple
 
+import Data.Maybe (catMaybes)
 import Data.Set (Set)
 import qualified Data.Set
 import Data.Text (Text)
@@ -182,7 +183,7 @@ watch = do
                 $ do
           forM_ bs $ \blk -> do
             blockSlot <- case blk ^. slot of
-              Just s -> pure s -- tell [Pong s]
+              Just s -> pure s
               Nothing -> throwError $ BlockfrostError "Block with no slot"
 
             logs @Text $ "Processing new block " <> (blk ^. hash . coerced)
@@ -190,6 +191,7 @@ watch = do
             -- [(Address, [TxHash])]
             -- check vs tracked txs and addrs
             let addrs = Data.Set.fromList $ map fst addrsTxs
+                addrTxMap = Data.Map.fromList addrsTxs
 
             reqs <- get @(Set RequestDetail)
             let newEventDetail rd ptime evt = EventDetail
@@ -206,11 +208,30 @@ watch = do
                   unRecurring r = r
 
               case unRecurring $ requestDetailRequest req of
-                AddressFundsRequest a | a `Data.Set.member` addrs -> do
-                  handleRequest req $ AddressFundsChanged a
+                AddressFundsRequest addr | addr `Data.Set.member` addrs -> do
+                  handleRequest req $ AddressFundsChanged addr
 
                 Ping -> do
                   handleRequest req $ Pong blockSlot
+
+                SlotRequest s | s >= blockSlot -> do
+                  handleRequest req $ SlotReached blockSlot
+
+                UtxoProducedRequest addr | addr `Data.Set.member` addrs -> do
+                  case Data.Map.lookup addr addrTxMap of
+                    Nothing -> pure () -- can't happen but we should log it
+                    Just txs -> do
+                      utxoProducing <- forM txs $ \tx -> do
+                        utxos <- getTxUtxos tx
+                        let relevant = filter ((== addr) . view address) (utxos ^. outputs)
+                        pure $ case relevant of
+                          [] -> Nothing
+                          _  -> pure tx
+                      logs $ "Utxos producing txs " <> showText utxoProducing
+                      case catMaybes $ utxoProducing of
+                        [] -> pure ()
+                        ptxs -> handleRequest req $ UtxoProduced addr ptxs
+
 
                 _ -> pure ()
 
