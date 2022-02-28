@@ -139,11 +139,43 @@ watch = do
 
 
   forever $ do
-    newReqs <- getRequests
-    unless (Data.Set.null newReqs) $ logs $ "New requests " <> showText newReqs
-    modify @(Set RequestDetail) (Data.Set.union newReqs)
-
     currentBlock <- get @Block
+
+    newReqs <- getRequests
+    unless (Data.Set.null newReqs) $ do
+      logs $ "New requests " <> showText newReqs
+      handled <- fmap snd
+        $ runWriter @[(RequestDetail, EventDetail)]
+        $ do
+          forM (Data.Set.toList newReqs) $ \req -> case unRecurring $ req ^. request of
+            TransactionStatusRequest tx -> do
+              etx <- tryError $ getTx tx
+              case etx of
+                Left BlockfrostNotFound -> pure ()
+                Left e -> rethrow e
+                Right txinfo -> case (-) <$> currentBlock ^. height <*> txinfo ^? blockHeight of
+                  Nothing -> throwError $ RuntimeError "Block with no blockHeight"
+                  Just depth | depth >= 10 -> do
+                    handleRequest req $ TransactionConfirmed tx
+                  Just depth | depth < 10 -> do
+                    handleRequest req $ TransactionTentative tx depth
+                  Just _depth -> throwError $ RuntimeError "Absurd tx depth"
+
+            _ -> pure ()
+
+      logs $ "Instantly handled " <> (showText $ length handled) <> " requests"
+      let handledReqs = Data.Set.fromList $ map fst handled
+
+      forM_ (map snd handled) $ \evt -> produceEvent evt
+
+      -- TODO: also drop Recurring TransactionRequests on TransactionConfirmed
+      modify @(Set RequestDetail) $
+        Data.Set.union
+          (Data.Set.difference
+            newReqs
+            (Data.Set.filter (not . recurring) handledReqs)
+          )
+
     next <- tryError $ getNextBlocks (Right $ currentBlock ^. hash)
     case next of
       Left BlockfrostNotFound -> do
@@ -182,7 +214,7 @@ watch = do
           forM_ bs $ \blk -> do
             blockSlot <- case blk ^. slot of
               Just s -> pure s
-              Nothing -> throwError $ BlockfrostError "Block with no slot"
+              Nothing -> throwError $ RuntimeError "Block with no slot"
 
             logs @Text $ "Processing new block " <> (blk ^. hash . coerced)
             addrsTxs <- getBlockAffectedAddresses (Right $ blk ^. hash)
