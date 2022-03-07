@@ -40,6 +40,11 @@
 
       // another random active script address
       // {"contents":"addr_test1wpzjtlyp6v4qx6gzjm4zc7lsdufw597507y060qhk84vpjsjd625n","tag":"AddressFundsRequest"}
+      var xhrs3 = new XMLHttpRequest();
+      xhrs3.open("POST", "/clients/request/" + uid);
+      xhrs3.setRequestHeader("Accept", "application/json");
+      xhrs3.setRequestHeader("Content-Type", "application/json");
+      xhrs3.send(`{"contents":{"contents":"addr_test1wpzjtlyp6v4qx6gzjm4zc7lsdufw597507y060qhk84vpjsjd625n","tag":"UtxoProducedRequest"},"tag":"Recurring"}`);
 
       // start sse
       var src = new EventSource("/sse/" + uid);
@@ -67,5 +72,14 @@
         p.appendChild(document.createTextNode(evt.data));
         output.prepend(p);
       });
+
+      src.addEventListener("UtxoProduced", function(evt) {
+        console.log(evt);
+
+        var p = document.createElement("p");
+        p.appendChild(document.createTextNode(evt.data));
+        output.prepend(p);
+      });
+
   }};
 </script>

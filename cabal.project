@@ -11,6 +11,7 @@ source-repository-package
     subdir:
       blockfrost-api
       blockfrost-client
+      blockfrost-client-core
 
 source-repository-package
     type: git
