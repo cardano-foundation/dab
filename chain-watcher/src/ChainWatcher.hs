@@ -85,7 +85,7 @@ runWatcher qreqs qevts = fix $ \loop -> do
         . evalState @Block startBlock
         . evalState @[Block] (pure startBlock)
         . evalState @(Set RequestDetail) mempty
-        . evalState @(Map Address [TxOutRef]) mempty
+        . evalState @(Map TxOutRef Address) mempty
         . runReader @Int 10
         . handleBlockfrostClient
         . runReader @(TQueue RequestDetail) qreqs
@@ -129,7 +129,7 @@ watch :: forall m effs a .
   , Member (State (Set RequestDetail)) effs
   , Member (State Block) effs
   , Member (State [Block]) effs
-  , Member (State (Map Address [TxOutRef])) effs
+  , Member (State (Map TxOutRef Address)) effs
   , Member WatchSource effs
   , Member (Log Text) effs
   , Member Time effs
@@ -176,7 +176,7 @@ watch = do
                     [x] -> do
                       let addr = x ^. address
                       logs @Text $ "Adding utxo address to map of watched addresses " <> showText addr
-                      modify @(Map Address [TxOutRef]) $ Data.Map.adjust (txoutref:) addr
+                      modify @(Map TxOutRef Address) $ Data.Map.insert txoutref addr
 
                     _ -> logs $ "Transaction output not found" <> showText txoutref
 
@@ -270,6 +270,28 @@ watch = do
                         [] -> pure ()
                         ptxs -> handleRequest req $ UtxoProduced addr ptxs
 
+                UtxoSpentRequest txoutref@(txOutHash, txOutIndex)  -> do
+                  txOutRefAddrs <- get @(Map TxOutRef Address)
+                  case Data.Map.lookup txoutref txOutRefAddrs of
+                    Nothing -> do
+                      logs $ "UtxoSpentRequest with no mapping to address " <> showText txoutref
+                      pure ()
+                    Just addr -> do
+                      case Data.Map.lookup addr addrTxMap of
+                        Nothing -> pure ()
+                        Just txs -> do
+                          forM_ txs $ \tx -> do
+                            utxos <- getTxUtxos tx
+                            let relevant = filter (
+                                  \i ->     i ^. outputIndex == txOutIndex
+                                        -- TODO: until 0.4
+                                         && i ^. txHash == unTxHash txOutHash
+                                  ) (utxos ^. inputs)
+                            case relevant of
+                              [_x] -> do
+                                logs $ "Utxo spending tx " <> showText tx <> " txo: " <> showText txoutref
+                                handleRequest req $ UtxoSpent txoutref tx
+                              _ -> pure ()
 
                 _ -> pure ()
 
@@ -282,6 +304,13 @@ watch = do
             modify @(Set RequestDetail)
               (flip Data.Set.difference
                  (Data.Set.filter (not . recurring) handledReqs))
+
+            let spentTxOutRefs =
+                    catMaybes
+                  $ map (preview _UtxoSpentRequest . view request)
+                  $ map fst handled
+            modify @(Map TxOutRef Address)
+              $ Data.Map.filterWithKey (\k _ -> not $ k `elem` spentTxOutRefs)
 
             forM_ (map snd handled) $ \evt -> produceEvent evt
 

@@ -46,6 +46,12 @@
       xhrs3.setRequestHeader("Content-Type", "application/json");
       xhrs3.send(`{"contents":{"contents":"addr_test1wpzjtlyp6v4qx6gzjm4zc7lsdufw597507y060qhk84vpjsjd625n","tag":"UtxoProducedRequest"},"tag":"Recurring"}`);
 
+      var xhrs4 = new XMLHttpRequest();
+      xhrs4.open("POST", "/clients/request/" + uid);
+      xhrs4.setRequestHeader("Accept", "application/json");
+      xhrs4.setRequestHeader("Content-Type", "application/json");
+      xhrs4.send(`{"contents":["e25cb4fe155d0638527498d21ba3aca2805fd1846c06fbb8968b3b988a578987", 1],"tag":"UtxoSpentRequest"}`);
+
       // start sse
       var src = new EventSource("/sse/" + uid);
       console.log(src);
@@ -80,6 +86,15 @@
         p.appendChild(document.createTextNode(evt.data));
         output.prepend(p);
       });
+
+      src.addEventListener("UtxoSpent", function(evt) {
+        console.log(evt);
+
+        var p = document.createElement("p");
+        p.appendChild(document.createTextNode(evt.data));
+        output.prepend(p);
+      });
+
 
   }};
 </script>
