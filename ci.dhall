@@ -5,9 +5,7 @@ in    haskellCi.generalCi
         haskellCi.matrixSteps
         ( Some
             { ghc =
-              [ haskellCi.GHC.GHC8105
-              , haskellCi.GHC.GHC901
-              ]
+              [ haskellCi.GHC.GHC8107 ]
             , cabal = [ haskellCi.Cabal.Cabal34 ]
             }
         )
