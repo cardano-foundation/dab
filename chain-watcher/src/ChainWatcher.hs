@@ -149,54 +149,33 @@ watch = do
     newReqs <- getRequests
     unless (Data.Set.null newReqs) $ do
       logs $ "New requests " <> showText newReqs
-      handled <- fmap snd
-        $ runWriter @[(RequestDetail, EventDetail)]
-        $ do
-          forM (Data.Set.toList newReqs) $ \req -> case unRecurring $ req ^. request of
-            TransactionStatusRequest tx -> do
-              etx <- tryError $ getTx tx
-              case etx of
-                Left BlockfrostNotFound -> pure ()
-                Left e -> rethrow e
-                Right txinfo -> case (-) <$> currentBlock ^. height <*> txinfo ^? blockHeight of
-                  Nothing -> throwError $ RuntimeError "Block with no blockHeight"
-                  Just depth | depth >= 10 -> do
-                    handleRequest req $ TransactionConfirmed tx
-                  Just depth | depth < 10 -> do
-                    handleRequest req $ TransactionTentative tx depth
-                    modify @(Map Tx Integer) $ Data.Map.insert tx (txinfo ^. blockHeight)
-                  Just _depth -> throwError $ RuntimeError "Absurd tx depth"
+      forM_ (Data.Set.toList newReqs) $ \req -> case unRecurring $ req ^. request of
+        TransactionStatusRequest tx -> do
+          etx <- tryError $ getTx tx
+          case etx of
+            Left BlockfrostNotFound -> pure ()
+            Left e -> rethrow e
+            Right txinfo -> modify @(Map Tx Integer) $ Data.Map.insert tx (txinfo ^. blockHeight)
 
-            -- look up the address holding the utxo so we can track it in block processing loop
-            UtxoSpentRequest txoutref@(tx, txoutindex) -> do
-              etx <- tryError $ getTxUtxos tx
-              case etx of
-                Left BlockfrostNotFound -> logs @Text $ "Transaction not found for TxOutRef " <> showText txoutref
-                Left e -> rethrow e
-                Right utxos -> do
-                  let relevant = filter ((== txoutindex) . view outputIndex) (utxos ^. outputs)
-                  case relevant of
-                    [x] -> do
-                      let addr = x ^. address
-                      logs @Text $ "Adding utxo address to map of watched addresses " <> showText addr
-                      modify @(Map TxOutRef Address) $ Data.Map.insert txoutref addr
+        -- look up the address holding the utxo so we can track it in block processing loop
+        UtxoSpentRequest txoutref@(tx, txoutindex) -> do
+          etx <- tryError $ getTxUtxos tx
+          case etx of
+            Left BlockfrostNotFound -> logs @Text $ "Transaction not found for TxOutRef " <> showText txoutref
+            Left e -> rethrow e
+            Right utxos -> do
+              let relevant = filter ((== txoutindex) . view outputIndex) (utxos ^. outputs)
+              case relevant of
+                [x] -> do
+                  let addr = x ^. address
+                  logs @Text $ "Adding utxo address to map of watched addresses " <> showText addr
+                  modify @(Map TxOutRef Address) $ Data.Map.insert txoutref addr
 
-                    _ -> logs $ "Transaction output not found" <> showText txoutref
+                _ -> logs $ "Transaction output not found" <> showText txoutref
 
-            _ -> pure ()
+        _ -> pure ()
 
-      logs $ "Instantly handled " <> (showText $ length handled) <> " requests"
-      let handledReqs = Data.Set.fromList $ map fst handled
-
-      forM_ (map snd handled) $ \evt -> produceEvent evt
-
-      -- TODO: also drop Recurring TransactionRequests on TransactionConfirmed
-      modify @(Set RequestDetail) $
-        Data.Set.union
-          (Data.Set.difference
-            newReqs
-            (Data.Set.filter (not . recurring) handledReqs)
-          )
+      modify @(Set RequestDetail) $ Data.Set.union newReqs
 
     next <- tryError $ getNextBlocks (Right $ currentBlock ^. hash)
     case next of
