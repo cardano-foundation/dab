@@ -268,8 +268,7 @@ watch = do
                             utxos <- getTxUtxos tx
                             let relevant = filter (
                                   \i ->     i ^. outputIndex == txOutIndex
-                                        -- TODO: until 0.4
-                                         && i ^. txHash == unTxHash txOutHash
+                                         && i ^. txHash == txOutHash
                                   ) (utxos ^. inputs)
                             case relevant of
                               [_x] -> do
