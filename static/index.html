@@ -50,7 +50,19 @@
       xhrs4.open("POST", "/clients/request/" + uid);
       xhrs4.setRequestHeader("Accept", "application/json");
       xhrs4.setRequestHeader("Content-Type", "application/json");
-      xhrs4.send(`{"contents":["e25cb4fe155d0638527498d21ba3aca2805fd1846c06fbb8968b3b988a578987", 1],"tag":"UtxoSpentRequest"}`);
+      xhrs4.send(`{"contents":["e25cb4fe155d0638527498d21ba3aca2805fd1846c06fbb8968b3b988a578987", 3],"tag":"UtxoSpentRequest"}`);
+
+      var xhrs5 = new XMLHttpRequest();
+      xhrs5.open("POST", "/clients/request/" + uid);
+      xhrs5.setRequestHeader("Accept", "application/json");
+      xhrs5.setRequestHeader("Content-Type", "application/json");
+      xhrs5.send(`{"contents":"52a79bdf4485436766f0e8570f4dc6a6fe6d96f975c5db850d243058c43f42ee","tag":"TransactionStatusRequest"}`);
+
+      var xhrs6 = new XMLHttpRequest();
+      xhrs6.open("POST", "/clients/request/" + uid);
+      xhrs6.setRequestHeader("Accept", "application/json");
+      xhrs6.setRequestHeader("Content-Type", "application/json");
+      xhrs6.send(`{"contents":{"contents":"1ff9bcb4e380facf3fb4edca277b52d7b3905e1d86f9ad7dee175d4ab0eb2afa","tag":"TransactionStatusRequest"},"tag":"Recurring"}`);
 
       // start sse
       var src = new EventSource("/sse/" + uid);
@@ -95,6 +107,21 @@
         output.prepend(p);
       });
 
+      src.addEventListener("TransactionTentative", function(evt) {
+        console.log(evt);
+
+        var p = document.createElement("p");
+        p.appendChild(document.createTextNode(evt.data));
+        output.prepend(p);
+      });
+
+      src.addEventListener("TransactionConfirmed", function(evt) {
+        console.log(evt);
+
+        var p = document.createElement("p");
+        p.appendChild(document.createTextNode(evt.data));
+        output.prepend(p);
+      });
 
   }};
 </script>

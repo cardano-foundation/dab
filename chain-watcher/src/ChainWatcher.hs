@@ -86,6 +86,7 @@ runWatcher qreqs qevts = fix $ \loop -> do
         . evalState @[Block] (pure startBlock)
         . evalState @(Set RequestDetail) mempty
         . evalState @(Map TxOutRef Address) mempty
+        . evalState @(Map Tx Integer) mempty
         . runReader @Int 10
         . handleBlockfrostClient
         . runReader @(TQueue RequestDetail) qreqs
@@ -130,6 +131,7 @@ watch :: forall m effs a .
   , Member (State Block) effs
   , Member (State [Block]) effs
   , Member (State (Map TxOutRef Address)) effs
+  , Member (State (Map Tx Integer)) effs
   , Member WatchSource effs
   , Member (Log Text) effs
   , Member Time effs
@@ -162,6 +164,7 @@ watch = do
                     handleRequest req $ TransactionConfirmed tx
                   Just depth | depth < 10 -> do
                     handleRequest req $ TransactionTentative tx depth
+                    modify @(Map Tx Integer) $ Data.Map.insert tx (txinfo ^. blockHeight)
                   Just _depth -> throwError $ RuntimeError "Absurd tx depth"
 
             -- look up the address holding the utxo so we can track it in block processing loop
@@ -241,8 +244,10 @@ watch = do
             -- check vs tracked txs and addrs
             let addrs = Data.Set.fromList $ map fst addrsTxs
                 addrTxMap = Data.Map.fromList addrsTxs
+                blockTxHashes = Data.Set.fromList $ concatMap snd addrsTxs
 
             reqs <- get @(Set RequestDetail)
+            trackedTxs <- get @(Map Tx Integer)
 
             forM (Data.Set.toList reqs) $ \req -> do
               case unRecurring $ req ^. request of
@@ -292,6 +297,33 @@ watch = do
                                 logs $ "Utxo spending tx " <> showText tx <> " txo: " <> showText txoutref
                                 handleRequest req $ UtxoSpent txoutref tx
                               _ -> pure ()
+
+                TransactionStatusRequest tx |    tx `Data.Set.member` blockTxHashes
+                                              && tx `Data.Map.notMember` trackedTxs -> do
+                  txinfo <- getTx tx
+                  case (-) <$> blk ^. height <*> txinfo ^? blockHeight of
+                      Nothing -> throwError $ RuntimeError "Block with no blockHeight"
+                      Just depth | depth >= 10 -> do
+                        handleRequest req $ TransactionConfirmed tx
+                      Just depth | depth < 10 -> do
+                        -- this can end up negative since another block might get added
+                        -- in between our getBlockAffectedAddresses call and getTx call..
+                        handleRequest req $ TransactionTentative tx (min 0 depth)
+                        modify @(Map Tx Integer) $ Data.Map.insert tx (txinfo ^. blockHeight)
+                      Just _depth -> throwError $ RuntimeError "Absurd tx depth"
+
+                TransactionStatusRequest tx | tx `Data.Map.member` trackedTxs -> do
+                  case Data.Map.lookup tx trackedTxs of
+                    Nothing -> pure ()
+                    Just txBlockHeight -> do
+                      case (-) <$> blk ^. height <*> Just txBlockHeight of
+                        Nothing -> throwError $ RuntimeError "Block with no blockHeight"
+                        Just depth | depth >= 10 -> do
+                          handleRequest req $ TransactionConfirmed tx
+                          modify @(Map Tx Integer) $ Data.Map.delete tx
+                        Just depth | depth < 10 -> do
+                          handleRequest req $ TransactionTentative tx depth
+                        Just _depth -> throwError $ RuntimeError "Absurd tx depth"
 
                 _ -> pure ()
 
