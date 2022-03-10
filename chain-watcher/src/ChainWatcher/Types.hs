@@ -2,8 +2,7 @@ module ChainWatcher.Types where
 
 import Control.Lens (makePrisms, makeFields)
 import Control.Monad.Freer.TH ( makeEffect )
-import Data.Aeson ( FromJSON, ToJSON )
-import GHC.Generics (Generic)
+import Deriving.Aeson
 import Data.Set (Set)
 import qualified Data.Set
 import Data.Map (Map)
@@ -39,7 +38,9 @@ data EventDetail = EventDetail {
   , eventDetailTime :: POSIXTime
   , eventDetailEvent :: Event
   }
-  deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
+  deriving stock (Show, Eq, Ord, Generic)
+  deriving (FromJSON, ToJSON)
+  via CustomJSON '[FieldLabelModifier '[StripPrefix "eventDetail", CamelToSnake]] EventDetail
 
 makeFields ''EventDetail
 

@@ -63,6 +63,7 @@ library
                       , blockfrost-freer-client
                       , co-log-core
                       , aeson
+                      , deriving-aeson
                       , freer-simple
                       , async
                       , lens
