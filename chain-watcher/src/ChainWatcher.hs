@@ -1,9 +1,11 @@
-{-# LANGUAGE NumericUnderscores #-}
+
 module ChainWatcher where
 
-
+import Control.Concurrent
+import Control.Concurrent.STM
+import Control.Concurrent.Async
+import Control.Lens
 import Control.Monad
-import Control.Monad.Reader hiding (ask, Reader, runReader, fix, liftIO)
 import Control.Monad.Freer
 import Control.Monad.Freer.Error
 import Control.Monad.Freer.Reader hiding (asks)
@@ -11,54 +13,31 @@ import Control.Monad.Freer.Writer
 import Control.Monad.Freer.State
 import Control.Monad.Freer.Log
 import Control.Monad.Freer.Time
-import Control.Monad.IO.Class (liftIO)
+import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Colog.Core.IO (logStringStdout)
 
-import Data.Time.Clock.POSIX
-import qualified Data.Text
 import Data.Function (fix)
 import Data.Map (Map)
-import qualified Data.Map
-
-import Control.Concurrent
-import Control.Concurrent.STM
-import Control.Concurrent.Async
-
-import Blockfrost.Freer.Client hiding (api)
-import Control.Lens
-
-import Text.Pretty.Simple
-
 import Data.Maybe (catMaybes)
 import Data.Set (Set)
-import qualified Data.Set
 import Data.Text (Text)
 
-import Servant hiding (throwError)
-import qualified Servant
-import Servant.API.EventStream
-import qualified Network.Wai.Handler.Warp as Warp
-import           Network.Wai.EventSource        ( ServerEvent(ServerEvent, CommentEvent, CloseEvent) )
-import Network.Wai (Middleware)
-import Network.Wai.Middleware.AddHeaders (addHeaders)
-import Network.Wai.Middleware.Gzip (gzip)
-import Network.Wai.Middleware.Cors
+import qualified Data.Map
+import qualified Data.Set
+import qualified Data.Text
 
-import qualified Pipes                    as P
-
-import           Data.ByteString.Builder
-
-import Data.Aeson
-import Data.UUID.V4
+import Blockfrost.Freer.Client hiding (api)
 
 import ChainWatcher.Types
+import ChainWatcher.Server
+
 main :: IO ()
 main = do
   (qreqs, qevts) <- (,) <$> newTQueueIO <*> newTQueueIO
 
   tclients <- newTVarIO mempty
-  _apiAsync <- async $ mains tclients qreqs
+  _apiAsync <- async $ runServer tclients qreqs
 
   _pumpAsync <- async $ forever $ do
     atomically $ do
@@ -361,185 +340,3 @@ handleWatchSource
 handleWatchSource = interpret $ \case
   GetRequests -> ask >>= fmap Data.Set.fromList . liftIO . atomically . flushTQueue
   ProduceEvent e -> ask >>= \q -> liftIO . atomically $ writeTQueue q e
-
-
-type API =
-       "healthcheck" :> Get '[JSON] Bool
-  :<|> "sse" :> Capture "client_id" ClientId :> ServerSentEvents
-  :<|> "clients" :> ClientsAPI
-  :<|> "demo" :> Raw
-
-type ClientsAPI =
-        "new"
-    :> Post '[JSON] ClientId
-   :<|>
-        "remove"
-    :> Capture "client_id" ClientId
-    :> Post '[JSON] ()
-   :<|>
-        "request"
-    :> Capture "client_id" ClientId
-    :> ReqBody '[JSON] Request
-    :> Post '[JSON] Integer
-
-api :: Proxy API
-api = Proxy
-
-data ServerState = ServerState
-  { serverStateClients :: TVar Clients
-  , serverStateRequestQueue :: TQueue RequestDetail
-  }
-
-type AppM = ReaderT ServerState Handler
-
--- and also requests queue
-server :: ServerT API AppM
-server =
-       pure True
-  :<|> handleSSE
-  :<|> handleClientsApi
-  :<|> serveDirectoryWebApp "static"
-
-handleClientsApi :: ServerT ClientsAPI AppM
-handleClientsApi =
-       handleNewClient
-  :<|> handleRemoveClient
-  :<|> handleNewRequest
-
-handleNewClient :: AppM ClientId
-handleNewClient = do
-  tclients <- asks serverStateClients
-  liftIO $ do
-    uuid <- nextRandom
-    atomically $ modifyTVar tclients (Data.Map.insert uuid newClientState)
-    pure uuid
-
-handleRemoveClient :: ClientId -> AppM ()
-handleRemoveClient cid = do
-  tclients <- asks serverStateClients
-  liftIO $ atomically $ modifyTVar tclients (Data.Map.delete cid)
-
-handleNewRequest :: ClientId -> Request -> AppM Integer
-handleNewRequest cid req = do
-  tclients <- asks serverStateClients
-
-  t <- liftIO getPOSIXTime
-  let rd = RequestDetail {
-         requestDetailRequestId = 0
-       , requestDetailClientId = cid
-       , requestDetailRequest = req
-       , requestDetailTime = t
-       }
-
-  res <- liftIO $ atomically $ do
-    clients <- readTVar tclients
-    case Data.Map.lookup cid clients of
-      Nothing -> pure Nothing
-      Just c -> do
-        let nextId = succ $ clientStateLastId c
-            nextReq = rd { requestDetailRequestId = nextId }
-            newC = c {
-                clientStateRequests =
-                  Data.Set.insert
-                    nextReq
-                    (clientStateRequests c)
-
-              , clientStateLastId = nextId
-              }
-        modifyTVar tclients (Data.Map.adjust (pure newC) cid)
-        pure $ Just nextReq
-
-  maybe
-    (Servant.throwError err404)
-    (\r -> do
-       qreqs <- asks serverStateRequestQueue
-       liftIO $ atomically $ writeTQueue qreqs r
-       return (requestDetailRequestId r)
-    )
-    res
-
-handleSSE :: ClientId -> AppM EventSourceHdr
-handleSSE cid = do
-  tclients <- asks serverStateClients
-  t <- liftIO getPOSIXTime
-  res <- liftIO $ atomically $ do
-    clients <- readTVar tclients
-    case Data.Map.lookup cid clients of
-      Nothing -> pure Nothing
-      Just c -> do
-        let rd = RequestDetail {
-                     requestDetailRequestId = 0
-                   , requestDetailClientId = cid
-                   , requestDetailRequest = Recurring Ping
-                   , requestDetailTime = t
-                   }
-        let nextId = succ $ clientStateLastId c
-            nextReq = rd { requestDetailRequestId = nextId }
-            newC = c {
-                clientStateRequests =
-                  Data.Set.insert
-                  nextReq
-                  (clientStateRequests c)
-
-              , clientStateLastId = nextId
-              }
-
-        modifyTVar tclients (Data.Map.adjust (pure newC) cid)
-        pure $ Just nextReq
-
-  case res of
-    Nothing -> Servant.throwError err404
-    Just req -> do
-      qreqs <- asks serverStateRequestQueue
-      liftIO $ atomically $ writeTQueue qreqs req
-
-      return $ eventSource $ do
-          P.yield (CommentEvent (string8 "hi"))
-          forever $ do
-            evts <- liftIO $ atomically $ do
-              clients <- readTVar tclients
-              case Data.Map.lookup cid clients of
-                Nothing -> pure $ pure CloseEvent
-                Just c -> do
-                  let (evts, newC) = takeEvents c
-                  modifyTVar tclients (Data.Map.adjust (pure newC) cid)
-                  pure $ map eventDetailAsServerEvent evts
-            forM_ evts P.yield
-            liftIO $ do
-              Control.Concurrent.threadDelay 1_000_000
-
-mains :: TVar Clients -> TQueue RequestDetail -> IO ()
-mains clients qreqs = do
-  Warp.run 8282
-    $ simpleCors
-    $ gzip def
-    $ headers
-    $ serve api
-    $ hoistServer
-        api
-        (flip Control.Monad.Reader.runReaderT (ServerState clients qreqs))
-        server
-  where
-      -- headers required for SSE to work through nginx
-      -- not required if using warp directly
-      headers :: Middleware
-      headers = addHeaders [
-                             ("Cache-Control", "no-cache")
-                           ]
-
-eventDetailAsServerEvent :: EventDetail -> ServerEvent
-eventDetailAsServerEvent ed =
-  ServerEvent
-    (Just $ string8 $ eventName $ ed ^. event)
-    (Just $ integerDec $ ed ^. eventId)
-    [lazyByteString $ encode $ toJSON ed]
-
-eventName :: Event -> String
-eventName (Pong _) = "Pong"
-eventName (SlotReached _) = "SlotReached"
-eventName (UtxoSpent _ _) = "UtxoSpent"
-eventName (UtxoProduced _ _) = "UtxoProduced"
-eventName (TransactionTentative _ _) = "TransactionTentative"
-eventName (TransactionConfirmed _) = "TransactionConfirmed"
-eventName (AddressFundsChanged _) = "AddressFundsChanged"
-eventName (Rollback evt) = "Rollback" ++ (eventName evt)

@@ -40,6 +40,7 @@ common libstuff
     InstanceSigs
     LambdaCase
     MultiParamTypeClasses
+    NumericUnderscores
     RankNTypes
     ScopedTypeVariables
     TemplateHaskell
@@ -56,6 +57,8 @@ library
    import:              libstuff
    hs-source-dirs:      src
    exposed-modules:     ChainWatcher
+                      , ChainWatcher.Api
+                      , ChainWatcher.Server
                       , ChainWatcher.Types
                       , Control.Monad.Freer.Log
                       , Control.Monad.Freer.Time

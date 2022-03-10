@@ -1,3 +1,4 @@
+
 module ChainWatcher.Types where
 
 import Control.Lens (makePrisms, makeFields)
@@ -103,9 +104,6 @@ data TransportType =
   | SlashEvents
   deriving (Eq, Show)
 
-type Clients = Map ClientId ClientState
--- ClientState, ClientConfig
-
 data ClientState = ClientState {
     clientStateRequests :: Set RequestDetail
   , clientStatePendingEvents :: [EventDetail]
@@ -188,7 +186,7 @@ takeEvents cs =
   in (pending, cs { clientStatePendingEvents = mempty
                   , clientStatePastEvents = clientStatePastEvents cs ++ pending})
 
-routeEvent :: EventDetail -> Clients -> Clients
+routeEvent :: EventDetail -> Map ClientId ClientState -> Map ClientId ClientState
 routeEvent evt clients =
   case Data.Map.lookup (eventDetailClientId evt) clients of
     Nothing -> clients
