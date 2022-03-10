@@ -39,7 +39,7 @@ import Servant hiding (throwError)
 import qualified Servant
 import Servant.API.EventStream
 import qualified Network.Wai.Handler.Warp as Warp
-import           Network.Wai.EventSource        ( ServerEvent(..) )
+import           Network.Wai.EventSource        ( ServerEvent(ServerEvent, CommentEvent, CloseEvent) )
 import Network.Wai (Middleware)
 import Network.Wai.Middleware.AddHeaders (addHeaders)
 import Network.Wai.Middleware.Gzip (gzip)
@@ -49,6 +49,7 @@ import qualified Pipes                    as P
 
 import           Data.ByteString.Builder
 
+import Data.Aeson
 import Data.UUID.V4
 
 import ChainWatcher.Types
@@ -522,55 +523,23 @@ mains clients qreqs = do
       -- headers required for SSE to work through nginx
       -- not required if using warp directly
       headers :: Middleware
-      headers = addHeaders [ 
+      headers = addHeaders [
                              ("Cache-Control", "no-cache")
                            ]
 
 eventDetailAsServerEvent :: EventDetail -> ServerEvent
-eventDetailAsServerEvent ed = addId (eventDetailEventId ed) $ eventAsServerEvent (eventDetailEvent ed)
-  where
-    addId eid x@ServerEvent{} = x { Network.Wai.EventSource.eventId = Just $ integerDec eid }
-    addId _ x = x
+eventDetailAsServerEvent ed =
+  ServerEvent
+    (Just $ string8 $ eventName $ ed ^. event)
+    (Just $ integerDec $ ed ^. eventId)
+    [lazyByteString $ encode $ toJSON ed]
 
-eventAsServerEvent :: Event -> ServerEvent
-eventAsServerEvent (Pong (Slot s)) = ServerEvent
-  (Just $ string8 "Pong")
-  Nothing
-  [integerDec s]
-eventAsServerEvent (SlotReached (Slot s)) = ServerEvent
-  (Just $ string8 "SlotReached")
-  Nothing
-  [integerDec s]
-eventAsServerEvent (UtxoSpent txo spendingTx) = ServerEvent
-  (Just $ string8 "UtxoSpent")
-  Nothing
-  [buildTxo txo, buildTx spendingTx]
-eventAsServerEvent (UtxoProduced addr producingTxs) = ServerEvent
-  (Just $ string8 "UtxoProduced")
-  Nothing
-  (buildAddr addr : map buildTx producingTxs)
-eventAsServerEvent (TransactionConfirmed tx) = ServerEvent
-  (Just $ string8 "TransactionConfirmed")
-  Nothing
-  [buildTx tx]
-eventAsServerEvent (TransactionTentative tx confirms) = ServerEvent
-  (Just $ string8 "TransactionTentative")
-  Nothing
-  [buildTx tx, integerDec confirms]
-eventAsServerEvent (AddressFundsChanged addr) = ServerEvent
-  (Just $ string8 "AddressFundsChanged")
-  Nothing
-  [buildAddr addr]
-eventAsServerEvent (Rollback evt) =
-  let origEvent = eventAsServerEvent evt
-  in origEvent
-    { eventName = Just (string8 "Rollback") <> eventName origEvent }
-
-buildAddr :: Address -> Builder
-buildAddr = string8 . Data.Text.unpack . unAddress
-
-buildTx :: Tx -> Builder
-buildTx = string8 . Data.Text.unpack . unTxHash
-
-buildTxo :: TxOutRef -> Builder
-buildTxo (tx, idx) = buildTx tx <> "#"<> integerDec idx
+eventName :: Event -> String
+eventName (Pong _) = "Pong"
+eventName (SlotReached _) = "SlotReached"
+eventName (UtxoSpent _ _) = "UtxoSpent"
+eventName (UtxoProduced _ _) = "UtxoProduced"
+eventName (TransactionTentative _ _) = "TransactionTentative"
+eventName (TransactionConfirmed _) = "TransactionConfirmed"
+eventName (AddressFundsChanged _) = "AddressFundsChanged"
+eventName (Rollback evt) = "Rollback" ++ (eventName evt)
