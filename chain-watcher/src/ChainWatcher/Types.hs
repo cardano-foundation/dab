@@ -1,9 +1,9 @@
+
 module ChainWatcher.Types where
 
 import Control.Lens (makePrisms, makeFields)
 import Control.Monad.Freer.TH ( makeEffect )
-import Data.Aeson ( FromJSON, ToJSON )
-import GHC.Generics (Generic)
+import Deriving.Aeson
 import Data.Set (Set)
 import qualified Data.Set
 import Data.Map (Map)
@@ -39,7 +39,9 @@ data EventDetail = EventDetail {
   , eventDetailTime :: POSIXTime
   , eventDetailEvent :: Event
   }
-  deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
+  deriving stock (Show, Eq, Ord, Generic)
+  deriving (FromJSON, ToJSON)
+  via CustomJSON '[FieldLabelModifier '[StripPrefix "eventDetail", CamelToSnake]] EventDetail
 
 makeFields ''EventDetail
 
@@ -101,9 +103,6 @@ data TransportType =
   | Webhook
   | SlashEvents
   deriving (Eq, Show)
-
-type Clients = Map ClientId ClientState
--- ClientState, ClientConfig
 
 data ClientState = ClientState {
     clientStateRequests :: Set RequestDetail
@@ -187,7 +186,7 @@ takeEvents cs =
   in (pending, cs { clientStatePendingEvents = mempty
                   , clientStatePastEvents = clientStatePastEvents cs ++ pending})
 
-routeEvent :: EventDetail -> Clients -> Clients
+routeEvent :: EventDetail -> Map ClientId ClientState -> Map ClientId ClientState
 routeEvent evt clients =
   case Data.Map.lookup (eventDetailClientId evt) clients of
     Nothing -> clients

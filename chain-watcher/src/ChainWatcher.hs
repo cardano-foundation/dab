@@ -1,9 +1,11 @@
-{-# LANGUAGE NumericUnderscores #-}
+
 module ChainWatcher where
 
-
+import Control.Concurrent
+import Control.Concurrent.STM
+import Control.Concurrent.Async
+import Control.Lens
 import Control.Monad
-import Control.Monad.Reader hiding (ask, Reader, runReader, fix, liftIO)
 import Control.Monad.Freer
 import Control.Monad.Freer.Error
 import Control.Monad.Freer.Reader hiding (asks)
@@ -11,53 +13,31 @@ import Control.Monad.Freer.Writer
 import Control.Monad.Freer.State
 import Control.Monad.Freer.Log
 import Control.Monad.Freer.Time
-import Control.Monad.IO.Class (liftIO)
+import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Colog.Core.IO (logStringStdout)
 
-import Data.Time.Clock.POSIX
-import qualified Data.Text
 import Data.Function (fix)
 import Data.Map (Map)
-import qualified Data.Map
-
-import Control.Concurrent
-import Control.Concurrent.STM
-import Control.Concurrent.Async
-
-import Blockfrost.Freer.Client hiding (api)
-import Control.Lens
-
-import Text.Pretty.Simple
-
 import Data.Maybe (catMaybes)
 import Data.Set (Set)
-import qualified Data.Set
 import Data.Text (Text)
 
-import Servant hiding (throwError)
-import qualified Servant
-import Servant.API.EventStream
-import qualified Network.Wai.Handler.Warp as Warp
-import           Network.Wai.EventSource        ( ServerEvent(..) )
-import Network.Wai (Middleware)
-import Network.Wai.Middleware.AddHeaders (addHeaders)
-import Network.Wai.Middleware.Gzip (gzip)
-import Network.Wai.Middleware.Cors
+import qualified Data.Map
+import qualified Data.Set
+import qualified Data.Text
 
-import qualified Pipes                    as P
-
-import           Data.ByteString.Builder
-
-import Data.UUID.V4
+import Blockfrost.Freer.Client hiding (api)
 
 import ChainWatcher.Types
+import ChainWatcher.Server
+
 main :: IO ()
 main = do
   (qreqs, qevts) <- (,) <$> newTQueueIO <*> newTQueueIO
 
   tclients <- newTVarIO mempty
-  _apiAsync <- async $ mains tclients qreqs
+  _apiAsync <- async $ runServer tclients qreqs
 
   _pumpAsync <- async $ forever $ do
     atomically $ do
@@ -85,7 +65,8 @@ runWatcher qreqs qevts = fix $ \loop -> do
         . evalState @Block startBlock
         . evalState @[Block] (pure startBlock)
         . evalState @(Set RequestDetail) mempty
-        . evalState @(Map Address [TxOutRef]) mempty
+        . evalState @(Map TxOutRef Address) mempty
+        . evalState @(Map Tx Integer) mempty
         . runReader @Int 10
         . handleBlockfrostClient
         . runReader @(TQueue RequestDetail) qreqs
@@ -129,7 +110,8 @@ watch :: forall m effs a .
   , Member (State (Set RequestDetail)) effs
   , Member (State Block) effs
   , Member (State [Block]) effs
-  , Member (State (Map Address [TxOutRef])) effs
+  , Member (State (Map TxOutRef Address)) effs
+  , Member (State (Map Tx Integer)) effs
   , Member WatchSource effs
   , Member (Log Text) effs
   , Member Time effs
@@ -147,53 +129,33 @@ watch = do
     newReqs <- getRequests
     unless (Data.Set.null newReqs) $ do
       logs $ "New requests " <> showText newReqs
-      handled <- fmap snd
-        $ runWriter @[(RequestDetail, EventDetail)]
-        $ do
-          forM (Data.Set.toList newReqs) $ \req -> case unRecurring $ req ^. request of
-            TransactionStatusRequest tx -> do
-              etx <- tryError $ getTx tx
-              case etx of
-                Left BlockfrostNotFound -> pure ()
-                Left e -> rethrow e
-                Right txinfo -> case (-) <$> currentBlock ^. height <*> txinfo ^? blockHeight of
-                  Nothing -> throwError $ RuntimeError "Block with no blockHeight"
-                  Just depth | depth >= 10 -> do
-                    handleRequest req $ TransactionConfirmed tx
-                  Just depth | depth < 10 -> do
-                    handleRequest req $ TransactionTentative tx depth
-                  Just _depth -> throwError $ RuntimeError "Absurd tx depth"
+      forM_ (Data.Set.toList newReqs) $ \req -> case unRecurring $ req ^. request of
+        TransactionStatusRequest tx -> do
+          etx <- tryError $ getTx tx
+          case etx of
+            Left BlockfrostNotFound -> pure ()
+            Left e -> rethrow e
+            Right txinfo -> modify @(Map Tx Integer) $ Data.Map.insert tx (txinfo ^. blockHeight)
 
-            -- look up the address holding the utxo so we can track it in block processing loop
-            UtxoSpentRequest txoutref@(tx, txoutindex) -> do
-              etx <- tryError $ getTxUtxos tx
-              case etx of
-                Left BlockfrostNotFound -> logs @Text $ "Transaction not found for TxOutRef " <> showText txoutref
-                Left e -> rethrow e
-                Right utxos -> do
-                  let relevant = filter ((== txoutindex) . view outputIndex) (utxos ^. outputs)
-                  case relevant of
-                    [x] -> do
-                      let addr = x ^. address
-                      logs @Text $ "Adding utxo address to map of watched addresses " <> showText addr
-                      modify @(Map Address [TxOutRef]) $ Data.Map.adjust (txoutref:) addr
+        -- look up the address holding the utxo so we can track it in block processing loop
+        UtxoSpentRequest txoutref@(tx, txoutindex) -> do
+          etx <- tryError $ getTxUtxos tx
+          case etx of
+            Left BlockfrostNotFound -> logs @Text $ "Transaction not found for TxOutRef " <> showText txoutref
+            Left e -> rethrow e
+            Right utxos -> do
+              let relevant = filter ((== txoutindex) . view outputIndex) (utxos ^. outputs)
+              case relevant of
+                [x] -> do
+                  let addr = x ^. address
+                  logs @Text $ "Adding utxo address to map of watched addresses " <> showText addr
+                  modify @(Map TxOutRef Address) $ Data.Map.insert txoutref addr
 
-                    _ -> logs $ "Transaction output not found" <> showText txoutref
+                _ -> logs $ "Transaction output not found" <> showText txoutref
 
-            _ -> pure ()
+        _ -> pure ()
 
-      logs $ "Instantly handled " <> (showText $ length handled) <> " requests"
-      let handledReqs = Data.Set.fromList $ map fst handled
-
-      forM_ (map snd handled) $ \evt -> produceEvent evt
-
-      -- TODO: also drop Recurring TransactionRequests on TransactionConfirmed
-      modify @(Set RequestDetail) $
-        Data.Set.union
-          (Data.Set.difference
-            newReqs
-            (Data.Set.filter (not . recurring) handledReqs)
-          )
+      modify @(Set RequestDetail) $ Data.Set.union newReqs
 
     next <- tryError $ getNextBlocks (Right $ currentBlock ^. hash)
     case next of
@@ -241,8 +203,10 @@ watch = do
             -- check vs tracked txs and addrs
             let addrs = Data.Set.fromList $ map fst addrsTxs
                 addrTxMap = Data.Map.fromList addrsTxs
+                blockTxHashes = Data.Set.fromList $ concatMap snd addrsTxs
 
             reqs <- get @(Set RequestDetail)
+            trackedTxs <- get @(Map Tx Integer)
 
             forM (Data.Set.toList reqs) $ \req -> do
               case unRecurring $ req ^. request of
@@ -270,6 +234,54 @@ watch = do
                         [] -> pure ()
                         ptxs -> handleRequest req $ UtxoProduced addr ptxs
 
+                UtxoSpentRequest txoutref@(txOutHash, txOutIndex)  -> do
+                  txOutRefAddrs <- get @(Map TxOutRef Address)
+                  case Data.Map.lookup txoutref txOutRefAddrs of
+                    Nothing -> do
+                      logs $ "UtxoSpentRequest with no mapping to address " <> showText txoutref
+                      pure ()
+                    Just addr -> do
+                      case Data.Map.lookup addr addrTxMap of
+                        Nothing -> pure ()
+                        Just txs -> do
+                          forM_ txs $ \tx -> do
+                            utxos <- getTxUtxos tx
+                            let relevant = filter (
+                                  \i ->     i ^. outputIndex == txOutIndex
+                                         && i ^. txHash == txOutHash
+                                  ) (utxos ^. inputs)
+                            case relevant of
+                              [_x] -> do
+                                logs $ "Utxo spending tx " <> showText tx <> " txo: " <> showText txoutref
+                                handleRequest req $ UtxoSpent txoutref tx
+                              _ -> pure ()
+
+                TransactionStatusRequest tx |    tx `Data.Set.member` blockTxHashes
+                                              && tx `Data.Map.notMember` trackedTxs -> do
+                  txinfo <- getTx tx
+                  case (-) <$> blk ^. height <*> txinfo ^? blockHeight of
+                      Nothing -> throwError $ RuntimeError "Block with no blockHeight"
+                      Just depth | depth >= 10 -> do
+                        handleRequest req $ TransactionConfirmed tx
+                      Just depth | depth < 10 -> do
+                        -- this can end up negative since another block might get added
+                        -- in between our getBlockAffectedAddresses call and getTx call..
+                        handleRequest req $ TransactionTentative tx (min 0 depth)
+                        modify @(Map Tx Integer) $ Data.Map.insert tx (txinfo ^. blockHeight)
+                      Just _depth -> throwError $ RuntimeError "Absurd tx depth"
+
+                TransactionStatusRequest tx | tx `Data.Map.member` trackedTxs -> do
+                  case Data.Map.lookup tx trackedTxs of
+                    Nothing -> pure ()
+                    Just txBlockHeight -> do
+                      case (-) <$> blk ^. height <*> Just txBlockHeight of
+                        Nothing -> throwError $ RuntimeError "Block with no blockHeight"
+                        Just depth | depth >= 10 -> do
+                          handleRequest req $ TransactionConfirmed tx
+                          modify @(Map Tx Integer) $ Data.Map.delete tx
+                        Just depth | depth < 10 -> do
+                          handleRequest req $ TransactionTentative tx depth
+                        Just _depth -> throwError $ RuntimeError "Absurd tx depth"
 
                 _ -> pure ()
 
@@ -282,6 +294,13 @@ watch = do
             modify @(Set RequestDetail)
               (flip Data.Set.difference
                  (Data.Set.filter (not . recurring) handledReqs))
+
+            let spentTxOutRefs =
+                    catMaybes
+                  $ map (preview _UtxoSpentRequest . view request)
+                  $ map fst handled
+            modify @(Map TxOutRef Address)
+              $ Data.Map.filterWithKey (\k _ -> not $ k `elem` spentTxOutRefs)
 
             forM_ (map snd handled) $ \evt -> produceEvent evt
 
@@ -321,217 +340,3 @@ handleWatchSource
 handleWatchSource = interpret $ \case
   GetRequests -> ask >>= fmap Data.Set.fromList . liftIO . atomically . flushTQueue
   ProduceEvent e -> ask >>= \q -> liftIO . atomically $ writeTQueue q e
-
-
-type API =
-       "healthcheck" :> Get '[JSON] Bool
-  :<|> "sse" :> Capture "client_id" ClientId :> ServerSentEvents
-  :<|> "clients" :> ClientsAPI
-  :<|> "demo" :> Raw
-
-type ClientsAPI =
-        "new"
-    :> Post '[JSON] ClientId
-   :<|>
-        "remove"
-    :> Capture "client_id" ClientId
-    :> Post '[JSON] ()
-   :<|>
-        "request"
-    :> Capture "client_id" ClientId
-    :> ReqBody '[JSON] Request
-    :> Post '[JSON] Integer
-
-api :: Proxy API
-api = Proxy
-
-data ServerState = ServerState
-  { serverStateClients :: TVar Clients
-  , serverStateRequestQueue :: TQueue RequestDetail
-  }
-
-type AppM = ReaderT ServerState Handler
-
--- and also requests queue
-server :: ServerT API AppM
-server =
-       pure True
-  :<|> handleSSE
-  :<|> handleClientsApi
-  :<|> serveDirectoryWebApp "static"
-
-handleClientsApi :: ServerT ClientsAPI AppM
-handleClientsApi =
-       handleNewClient
-  :<|> handleRemoveClient
-  :<|> handleNewRequest
-
-handleNewClient :: AppM ClientId
-handleNewClient = do
-  tclients <- asks serverStateClients
-  liftIO $ do
-    uuid <- nextRandom
-    atomically $ modifyTVar tclients (Data.Map.insert uuid newClientState)
-    pure uuid
-
-handleRemoveClient :: ClientId -> AppM ()
-handleRemoveClient cid = do
-  tclients <- asks serverStateClients
-  liftIO $ atomically $ modifyTVar tclients (Data.Map.delete cid)
-
-handleNewRequest :: ClientId -> Request -> AppM Integer
-handleNewRequest cid req = do
-  tclients <- asks serverStateClients
-
-  t <- liftIO getPOSIXTime
-  let rd = RequestDetail {
-         requestDetailRequestId = 0
-       , requestDetailClientId = cid
-       , requestDetailRequest = req
-       , requestDetailTime = t
-       }
-
-  res <- liftIO $ atomically $ do
-    clients <- readTVar tclients
-    case Data.Map.lookup cid clients of
-      Nothing -> pure Nothing
-      Just c -> do
-        let nextId = succ $ clientStateLastId c
-            nextReq = rd { requestDetailRequestId = nextId }
-            newC = c {
-                clientStateRequests =
-                  Data.Set.insert
-                    nextReq
-                    (clientStateRequests c)
-
-              , clientStateLastId = nextId
-              }
-        modifyTVar tclients (Data.Map.adjust (pure newC) cid)
-        pure $ Just nextReq
-
-  maybe
-    (Servant.throwError err404)
-    (\r -> do
-       qreqs <- asks serverStateRequestQueue
-       liftIO $ atomically $ writeTQueue qreqs r
-       return (requestDetailRequestId r)
-    )
-    res
-
-handleSSE :: ClientId -> AppM EventSourceHdr
-handleSSE cid = do
-  tclients <- asks serverStateClients
-  t <- liftIO getPOSIXTime
-  res <- liftIO $ atomically $ do
-    clients <- readTVar tclients
-    case Data.Map.lookup cid clients of
-      Nothing -> pure Nothing
-      Just c -> do
-        let rd = RequestDetail {
-                     requestDetailRequestId = 0
-                   , requestDetailClientId = cid
-                   , requestDetailRequest = Recurring Ping
-                   , requestDetailTime = t
-                   }
-        let nextId = succ $ clientStateLastId c
-            nextReq = rd { requestDetailRequestId = nextId }
-            newC = c {
-                clientStateRequests =
-                  Data.Set.insert
-                  nextReq
-                  (clientStateRequests c)
-
-              , clientStateLastId = nextId
-              }
-
-        modifyTVar tclients (Data.Map.adjust (pure newC) cid)
-        pure $ Just nextReq
-
-  case res of
-    Nothing -> Servant.throwError err404
-    Just req -> do
-      qreqs <- asks serverStateRequestQueue
-      liftIO $ atomically $ writeTQueue qreqs req
-
-      return $ eventSource $ do
-          P.yield (CommentEvent (string8 "hi"))
-          forever $ do
-            evts <- liftIO $ atomically $ do
-              clients <- readTVar tclients
-              case Data.Map.lookup cid clients of
-                Nothing -> pure $ pure CloseEvent
-                Just c -> do
-                  let (evts, newC) = takeEvents c
-                  modifyTVar tclients (Data.Map.adjust (pure newC) cid)
-                  pure $ map eventDetailAsServerEvent evts
-            forM_ evts P.yield
-            liftIO $ do
-              Control.Concurrent.threadDelay 1_000_000
-
-mains :: TVar Clients -> TQueue RequestDetail -> IO ()
-mains clients qreqs = do
-  Warp.run 8282
-    $ simpleCors
-    $ gzip def
-    $ headers
-    $ serve api
-    $ hoistServer
-        api
-        (flip Control.Monad.Reader.runReaderT (ServerState clients qreqs))
-        server
-  where
-      -- headers required for SSE to work through nginx
-      -- not required if using warp directly
-      headers :: Middleware
-      headers = addHeaders [ 
-                             ("Cache-Control", "no-cache")
-                           ]
-
-eventDetailAsServerEvent :: EventDetail -> ServerEvent
-eventDetailAsServerEvent ed = addId (eventDetailEventId ed) $ eventAsServerEvent (eventDetailEvent ed)
-  where
-    addId eid x@ServerEvent{} = x { Network.Wai.EventSource.eventId = Just $ integerDec eid }
-    addId _ x = x
-
-eventAsServerEvent :: Event -> ServerEvent
-eventAsServerEvent (Pong (Slot s)) = ServerEvent
-  (Just $ string8 "Pong")
-  Nothing
-  [integerDec s]
-eventAsServerEvent (SlotReached (Slot s)) = ServerEvent
-  (Just $ string8 "SlotReached")
-  Nothing
-  [integerDec s]
-eventAsServerEvent (UtxoSpent txo spendingTx) = ServerEvent
-  (Just $ string8 "UtxoSpent")
-  Nothing
-  [buildTxo txo, buildTx spendingTx]
-eventAsServerEvent (UtxoProduced addr producingTxs) = ServerEvent
-  (Just $ string8 "UtxoProduced")
-  Nothing
-  (buildAddr addr : map buildTx producingTxs)
-eventAsServerEvent (TransactionConfirmed tx) = ServerEvent
-  (Just $ string8 "TransactionConfirmed")
-  Nothing
-  [buildTx tx]
-eventAsServerEvent (TransactionTentative tx confirms) = ServerEvent
-  (Just $ string8 "TransactionTentative")
-  Nothing
-  [buildTx tx, integerDec confirms]
-eventAsServerEvent (AddressFundsChanged addr) = ServerEvent
-  (Just $ string8 "AddressFundsChanged")
-  Nothing
-  [buildAddr addr]
-eventAsServerEvent (Rollback evt) =
-  let origEvent = eventAsServerEvent evt
-  in origEvent
-    { eventName = Just (string8 "Rollback") <> eventName origEvent }
-
-buildAddr :: Address -> Builder
-buildAddr = string8 . Data.Text.unpack . unAddress
-
-buildTx :: Tx -> Builder
-buildTx = string8 . Data.Text.unpack . unTxHash
-
-buildTxo :: TxOutRef -> Builder
-buildTxo (tx, idx) = buildTx tx <> "#"<> integerDec idx
