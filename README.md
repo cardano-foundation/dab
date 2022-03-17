@@ -44,8 +44,11 @@ nix-shell
 export BLOCKFROST_TOKEN_PATH=~/.blockfrost.testnet.token
 cabal run chain-watcher-blockfrost
 ```
-
 View the demo on http://localhost:8282/demo/index.html
+
+## Demo of demo
+
+<img src=".github/workflows/demo.gif">
 
 ## Client API
 
