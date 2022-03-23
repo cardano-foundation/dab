@@ -37,7 +37,7 @@ main = do
   (qreqs, qevts) <- (,) <$> newTQueueIO <*> newTQueueIO
 
   tclients <- newTVarIO mempty
-  _apiAsync <- async $ runServer tclients qreqs
+  _apiAsync <- forkIO $ runServer tclients qreqs
 
   _pumpAsync <- async $ forever $ do
     atomically $ do
