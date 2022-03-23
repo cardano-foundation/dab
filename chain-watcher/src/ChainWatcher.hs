@@ -283,7 +283,8 @@ watch = do
                 _ -> pure ()
 
         case res of
-          Left e -> rethrow e
+          Left e -> do
+            logs $ "Error caught during new block processing loop " <> (showText e)
           Right handled -> do
             put @Block $ Prelude.last newBlocks
             modify @[Block] $ \xs -> take maxRollbackSize $ reverse newBlocks ++ xs
