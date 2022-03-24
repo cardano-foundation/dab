@@ -37,7 +37,7 @@ main = do
   (qreqs, qevts) <- (,) <$> newTQueueIO <*> newTQueueIO
 
   tclients <- newTVarIO mempty
-  _apiAsync <- async $ runServer tclients qreqs
+  _apiAsync <- forkIO $ runServer tclients qreqs
 
   _pumpAsync <- async $ forever $ do
     atomically $ do
@@ -181,10 +181,7 @@ watch = do
 
       Left e -> rethrow e
       Right [] -> pure ()
-      Right bs -> do
-        put @Block $ Prelude.last bs
-        modify @[Block] $ \xs -> take maxRollbackSize $ reverse bs ++ xs
-
+      Right newBlocks -> do
         -- Process new blocks
         -- this whole thing shouldn't produce events until it fully succeeds
         -- so we run writer
@@ -192,7 +189,7 @@ watch = do
                 $ fmap snd
                 $ runWriter @[(RequestDetail, EventDetail)]
                 $ do
-          forM_ bs $ \blk -> do
+          forM_ newBlocks $ \blk -> do
             blockSlot <- case blk ^. slot of
               Just s -> pure s
               Nothing -> throwError $ RuntimeError "Block with no slot"
@@ -286,8 +283,12 @@ watch = do
                 _ -> pure ()
 
         case res of
-          Left e -> rethrow e
+          Left e -> do
+            logs $ "Error caught during new block processing loop " <> (showText e)
           Right handled -> do
+            put @Block $ Prelude.last newBlocks
+            modify @[Block] $ \xs -> take maxRollbackSize $ reverse newBlocks ++ xs
+
             logs $ "Produced " <> (showText $ length handled) <> " events"
             let handledReqs = Data.Set.fromList $ map fst handled
 
