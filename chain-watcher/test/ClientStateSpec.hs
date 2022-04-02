@@ -1,19 +1,18 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module ClientStateSpec
-  where
+module ClientStateSpec where
 
-import Data.Text (Text)
 import ChainWatcher.Types
-import qualified Data.Set
 import Data.Maybe
-import Data.UUID ( fromString, UUID )
+import qualified Data.Set
+import Data.Text (Text)
+import Data.UUID (UUID, fromString)
 import Test.Hspec
 import Test.Tasty.Hspec
 import Test.Tasty.QuickCheck
 
 -- temp
-import Blockfrost.Freer.Client (Address, Slot(..), TxHash)
+import Blockfrost.Freer.Client (Address, Slot (..), TxHash)
 
 sampleClientAId :: UUID
 sampleClientAId = fromMaybe (error "absurd") $ fromString "c2cc10e1-57d6-4b6f-9899-38d972112d8c"
@@ -27,7 +26,7 @@ reqA = RequestDetail {
 
 recurringReqA = reqA { requestDetailRequest = Recurring (requestDetailRequest reqA) }
 
-sampleClientA = newClientState 
+sampleClientA = newClientState
   { clientStateRequests = Data.Set.fromList [reqA]
   , clientStateLastId = 1
   }

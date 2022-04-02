@@ -1,9 +1,9 @@
 
 module ChainWatcher.Api where
 
+import ChainWatcher.Types
 import Servant
 import Servant.API.EventStream
-import ChainWatcher.Types
 
 type API =
        "healthcheck" :> Get '[JSON] Bool

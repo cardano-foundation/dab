@@ -8,29 +8,31 @@ import Control.Lens
 import Control.Monad.Reader
 
 import Data.Aeson (encode, toJSON)
-import Data.ByteString.Builder (string8, integerDec, lazyByteString)
-import Data.UUID.V4 (nextRandom)
+import Data.ByteString.Builder (integerDec, lazyByteString, string8)
 import Data.Map (Map)
 import Data.Time.Clock.POSIX (getPOSIXTime)
+import Data.UUID.V4 (nextRandom)
 
 import qualified Data.Map
 import qualified Data.Set
 import qualified Pipes
 
+import Network.Wai (Middleware)
+import Network.Wai.EventSource
+  ( ServerEvent (CloseEvent, CommentEvent, ServerEvent)
+  )
+import Network.Wai.Handler.Warp (run)
+import Network.Wai.Middleware.AddHeaders (addHeaders)
+import Network.Wai.Middleware.Cors (simpleCors)
+import Network.Wai.Middleware.Gzip (def, gzip)
 import Servant
 import Servant.API.EventStream
-import Network.Wai (Middleware)
-import Network.Wai.EventSource ( ServerEvent(ServerEvent, CommentEvent, CloseEvent) )
-import Network.Wai.Middleware.AddHeaders (addHeaders)
-import Network.Wai.Middleware.Gzip (gzip, def)
-import Network.Wai.Middleware.Cors (simpleCors)
-import Network.Wai.Handler.Warp (run)
 
 import ChainWatcher.Api
 import ChainWatcher.Types
 
 data ServerState = ServerState
-  { serverStateClients :: TVar (Map ClientId ClientState)
+  { serverStateClients      :: TVar (Map ClientId ClientState)
   , serverStateRequestQueue :: TQueue RequestDetail
   }
 
@@ -181,11 +183,11 @@ eventDetailAsServerEvent ed =
     [lazyByteString $ encode $ toJSON ed]
 
 eventName :: Event -> String
-eventName (Pong _) = "Pong"
-eventName (SlotReached _) = "SlotReached"
-eventName (UtxoSpent _ _) = "UtxoSpent"
-eventName (UtxoProduced _ _) = "UtxoProduced"
+eventName (Pong _)                   = "Pong"
+eventName (SlotReached _)            = "SlotReached"
+eventName (UtxoSpent _ _)            = "UtxoSpent"
+eventName (UtxoProduced _ _)         = "UtxoProduced"
 eventName (TransactionTentative _ _) = "TransactionTentative"
-eventName (TransactionConfirmed _) = "TransactionConfirmed"
-eventName (AddressFundsChanged _) = "AddressFundsChanged"
-eventName (Rollback evt) = "Rollback" ++ (eventName evt)
+eventName (TransactionConfirmed _)   = "TransactionConfirmed"
+eventName (AddressFundsChanged _)    = "AddressFundsChanged"
+eventName (Rollback evt)             = "Rollback" ++ (eventName evt)
