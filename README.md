@@ -107,6 +107,6 @@ curl -v -N --http2 -H "Accept:text/event-stream" localhost:8282/sse/${cid}
 
 We are looking forward to your contributions!
 
-:bulb: See <a href="CODE_OF_CONDUCT.md">CODE_OF_CONDUCT</a> for more information about of code of conduct for contributors.
+:bulb: See <a href="CONTRIBUTING.md">Contributing</a> and <a href="CODE_OF_CONDUCT.md">Code of conduct</a> for more information about how to contribute your code.
 
 
