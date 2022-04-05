@@ -2,24 +2,22 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Blockfrost.Freer.Client (
-    module Blockfrost.Client
-
-  -- Eff
+module Blockfrost.Freer.Client
+  ( module Blockfrost.Client
+    -- Eff
   , ClientEffects
   , defaultBlockfrostHandler
   , handleBlockfrostClientEffects
   , runBlockfrost
   , tryError
-  )
-  where
+  ) where
 
 import Blockfrost.Client hiding (runBlockfrost, tryError)
 
-import Control.Monad.IO.Class
 import Control.Monad.Freer
-import Control.Monad.Freer.Reader
 import Control.Monad.Freer.Error
+import Control.Monad.Freer.Reader
+import Control.Monad.IO.Class
 
 import Servant.Client
 

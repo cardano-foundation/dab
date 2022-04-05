@@ -8,7 +8,7 @@ module Control.Monad.Freer.Time
   ) where
 
 import Control.Monad.Freer
-import Control.Monad.Freer.TH ( makeEffect )
+import Control.Monad.Freer.TH (makeEffect)
 import Control.Monad.IO.Class (MonadIO (..))
 
 import Data.Time.Clock.POSIX (POSIXTime)

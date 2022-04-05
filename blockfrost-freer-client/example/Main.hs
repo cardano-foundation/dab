@@ -1,8 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-module Main
-  where
+module Main where
 
 import Blockfrost.Freer.Client
 import Control.Monad.Freer

@@ -1,16 +1,16 @@
 
 module ChainWatcher.Types where
 
-import Control.Lens (makePrisms, makeFields)
-import Control.Monad.Freer.TH ( makeEffect )
-import Deriving.Aeson
-import Data.Set (Set)
-import qualified Data.Set
+import Control.Lens (makeFields, makePrisms)
+import Control.Monad.Freer.TH (makeEffect)
 import Data.Map (Map)
 import qualified Data.Map
+import Data.Set (Set)
+import qualified Data.Set
+import Deriving.Aeson
 
-import Data.UUID ( UUID )
 import Data.Time.Clock.POSIX (POSIXTime)
+import Data.UUID (UUID)
 
 import Blockfrost.Freer.Client (Address, Slot, TxHash)
 
@@ -34,10 +34,10 @@ makePrisms ''Event
 type ClientId = UUID
 
 data EventDetail = EventDetail {
-    eventDetailEventId :: Integer
+    eventDetailEventId  :: Integer
   , eventDetailClientId :: ClientId
-  , eventDetailTime :: POSIXTime
-  , eventDetailEvent :: Event
+  , eventDetailTime     :: POSIXTime
+  , eventDetailEvent    :: Event
   }
   deriving stock (Show, Eq, Ord, Generic)
   deriving (FromJSON, ToJSON)
@@ -63,27 +63,27 @@ makePrisms ''Request
 
 unRecurring :: Request -> Request
 unRecurring (Recurring r) = r
-unRecurring r = r
+unRecurring r             = r
 
 data RequestDetail = RequestDetail {
     requestDetailRequestId :: Integer
-  , requestDetailClientId :: ClientId
-  , requestDetailRequest :: Request
-  , requestDetailTime :: POSIXTime
+  , requestDetailClientId  :: ClientId
+  , requestDetailRequest   :: Request
+  , requestDetailTime      :: POSIXTime
   }
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
 makeFields ''RequestDetail
 
 eventToRequest :: Event -> Request
-eventToRequest (Pong _s) = Ping
-eventToRequest (SlotReached s) = SlotRequest s
-eventToRequest (UtxoSpent txoref _) = UtxoSpentRequest txoref
-eventToRequest (UtxoProduced addr _) = UtxoProducedRequest addr
-eventToRequest (TransactionConfirmed t) = TransactionStatusRequest t
+eventToRequest (Pong _s)                  = Ping
+eventToRequest (SlotReached s)            = SlotRequest s
+eventToRequest (UtxoSpent txoref _)       = UtxoSpentRequest txoref
+eventToRequest (UtxoProduced addr _)      = UtxoProducedRequest addr
+eventToRequest (TransactionConfirmed t)   = TransactionStatusRequest t
 eventToRequest (TransactionTentative t _) = TransactionStatusRequest t
 eventToRequest (AddressFundsChanged addr) = AddressFundsRequest addr
-eventToRequest (Rollback e) = eventToRequest e
+eventToRequest (Rollback e)               = eventToRequest e
 
 eventDetailToRequestDetail :: EventDetail -> RequestDetail
 eventDetailToRequestDetail ed = RequestDetail {
@@ -105,10 +105,10 @@ data TransportType =
   deriving (Eq, Show)
 
 data ClientState = ClientState {
-    clientStateRequests :: Set RequestDetail
+    clientStateRequests      :: Set RequestDetail
   , clientStatePendingEvents :: [EventDetail]
-  , clientStatePastEvents :: [EventDetail]
-  , clientStateLastId :: Integer
+  , clientStatePastEvents    :: [EventDetail]
+  , clientStateLastId        :: Integer
   } deriving (Eq, Show)
 
 maxPastEvents :: Integer
@@ -160,7 +160,7 @@ updateClientState evt cs =
 
 recurring :: RequestDetail -> Bool
 recurring RequestDetail { requestDetailRequest = Recurring _ } = True
-recurring _ = False
+recurring _                                                    = False
 
 hasRequest :: Integer -> ClientState -> Bool
 hasRequest rid =

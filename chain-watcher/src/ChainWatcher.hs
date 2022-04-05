@@ -2,18 +2,18 @@
 module ChainWatcher where
 
 import Control.Concurrent
-import Control.Concurrent.STM
 import Control.Concurrent.Async
+import Control.Concurrent.STM
 import Control.Lens
 import Control.Monad
 import Control.Monad.Freer
 import Control.Monad.Freer.Error
-import Control.Monad.Freer.Reader hiding (asks)
-import Control.Monad.Freer.Writer
-import Control.Monad.Freer.State
 import Control.Monad.Freer.Log
+import Control.Monad.Freer.Reader hiding (asks)
+import Control.Monad.Freer.State
 import Control.Monad.Freer.Time
-import Control.Monad.IO.Class (MonadIO(liftIO))
+import Control.Monad.Freer.Writer
+import Control.Monad.IO.Class (MonadIO (liftIO))
 
 import Colog.Core.IO (logStringStdout)
 
@@ -29,8 +29,8 @@ import qualified Data.Text
 
 import Blockfrost.Freer.Client hiding (api)
 
-import ChainWatcher.Types
 import ChainWatcher.Server
+import ChainWatcher.Types
 
 main :: IO ()
 main = do
@@ -168,8 +168,8 @@ watch = do
               res <- tryError $ getBlock (Right $ b ^. hash)
               case res of
                 Left BlockfrostNotFound -> findExisting bs (b:dropped)
-                Left e -> rethrow e
-                Right found -> pure (found, b:bs, dropped)
+                Left e                  -> rethrow e
+                Right found             -> pure (found, b:bs, dropped)
 
         (found, new, dropped) <- findExisting prev []
         logs @Text $ "Found previous existing block " <> (found ^. hash . coerced)
@@ -191,7 +191,7 @@ watch = do
                 $ do
           forM_ newBlocks $ \blk -> do
             blockSlot <- case blk ^. slot of
-              Just s -> pure s
+              Just s  -> pure s
               Nothing -> throwError $ RuntimeError "Block with no slot"
 
             logs @Text $ "Processing new block " <> (blk ^. hash . coerced)
@@ -228,7 +228,7 @@ watch = do
                           _  -> pure tx
                       logs $ "Utxos producing txs " <> showText utxoProducing
                       case catMaybes $ utxoProducing of
-                        [] -> pure ()
+                        []   -> pure ()
                         ptxs -> handleRequest req $ UtxoProduced addr ptxs
 
                 UtxoSpentRequest txoutref@(txOutHash, txOutIndex)  -> do
