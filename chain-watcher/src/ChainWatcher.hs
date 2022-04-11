@@ -180,7 +180,7 @@ watch = do
         pure ()
 
       Left e -> rethrow e
-      Right [] -> pure ()
+      Right [] -> logs @Text "No new blocks"
       Right newBlocks -> do
         -- Process new blocks
         -- this whole thing shouldn't produce events until it fully succeeds
