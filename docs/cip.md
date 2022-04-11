@@ -126,9 +126,8 @@ containing
 * `id` - `id` of the `Request` that produced the `Event`
 * `clientId` - `UUID` - unique client identifier
 * `time` - POSIX Time indicating when the `Event` occurred
-* `slot` - Absolute slot number
-TODO: confirmations / block hash?
-* `confirmations` 
+* `abs_slot` - Absolute slot number
+* `block` - Absolute block number (block height)
 
 ### API
 
