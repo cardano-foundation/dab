@@ -57,10 +57,7 @@ View the demo on http://localhost:8282/demo/index.html
 To register a new client on the chain-watcher.
 
 ```command
-curl -X POST -v localhost:8282/clients/new
-$ "cf7f8e9e-36af-476a-ba83-60cb4ac17597"
-
-cid="cf7f8e9e-36af-476a-ba83-60cb4ac17597"
+cid="$( curl -q -X POST -v localhost:8282/clients/new | jq -r)"
 ```
 
 ### Remove client
@@ -76,7 +73,11 @@ curl -X POST -v localhost:8282/clients/remove/${cid}
 To subscribe your client to a specific event on the chain-watcher.
 
 ```command
-curl -X POST --data '{"tag": "Ping"}' -H "Content-Type: application/json" -v localhost:8282/clients/request/${cid}
+curl \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -v localhost:8282/clients/request/${cid} \
+  --data '{"contents":"1075a1c98dbdf3486ec8f5050c84da30a057cb79ae0ce6d03d157c719c559332","tag":"TransactionStatusRequest"}'
 ```
 
 ### Recurring request
