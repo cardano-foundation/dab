@@ -105,15 +105,16 @@ handleNewRequest cid req = do
     )
     res
 
-handleEvents :: ClientId -> AppM [EventDetail]
-handleEvents cid = do
+handleEvents :: ClientId -> Maybe Bool -> AppM [EventDetail]
+handleEvents cid longPoll = do
   tclients <- asks serverStateClients
   res <- liftIO $ atomically $ do
     clients <- readTVar tclients
     case Data.Map.lookup cid clients of
       Nothing -> pure Nothing
       Just c -> do
-        let (_evts, newC) = takeEvents c
+        let (!evts, newC) = takeEvents c
+        when (longPoll == Just True) $ guard (not . null $ evts)
         modifyTVar tclients (Data.Map.adjust (pure newC) cid)
         pure $ Just $ clientStatePastEvents newC
 

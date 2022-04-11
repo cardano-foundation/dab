@@ -26,6 +26,7 @@ type ClientsAPI =
    :<|>
         "events"
     :> Capture "client_id" ClientId
+    :> QueryParam "longpoll" Bool
     :> Get '[JSON] [EventDetail]
 
 api :: Proxy API

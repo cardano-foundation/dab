@@ -28,6 +28,7 @@ flag Production
 common libstuff
   default-language:    Haskell2010
   default-extensions:
+    BangPatterns
     DataKinds
     DeriveAnyClass
     DeriveGeneric
