@@ -43,6 +43,27 @@ evtA = EventDetail {
 rollbackEvtA :: EventDetail
 rollbackEvtA = evtA { eventDetailEvent = Rollback (eventDetailEvent evtA)  }
 
+reqB = RequestDetail {
+    requestDetailRequestId = 1
+  , requestDetailClientId = sampleClientAId
+  , requestDetailRequest = SlotRequest 2
+  , requestDetailTime = 1612543815
+  }
+
+evtB = EventDetail {
+    eventDetailEventId = 1
+  , eventDetailClientId = sampleClientAId
+  , eventDetailEvent = SlotReached 2
+  , eventDetailTime = 1612543815
+  , eventDetailAbsSlot = 2
+  , eventDetailBlock = 2
+  }
+
+sampleClientB = newClientState
+  { clientStateRequests = Data.Set.fromList [reqA, reqB]
+  , clientStateLastId = 1
+  }
+
 eventWithNoRequest :: EventDetail
 eventWithNoRequest =
    EventDetail {
@@ -97,6 +118,25 @@ spec_client_state = do
       , clientStatePendingEvents = [evtA]
       })
 
+  it "returns recent events first" $ do
+    s1 <- updateClientState evtA sampleClientB
+    updateClientState evtB s1
+    `shouldBe`
+    Just (sampleClientB
+      { clientStateRequests = mempty
+      , clientStatePendingEvents = [evtB, evtA]
+      })
+
+  it "returns recent past events first" $ do
+    s1 <- updateClientState evtA sampleClientB
+    s2 <- updateClientState evtB s1
+    pure $ takeEvents s2
+    `shouldBe`
+    Just ([evtB, evtA], sampleClientB
+      { clientStateRequests = mempty
+      , clientStatePendingEvents = mempty
+      , clientStatePastEvents = [evtB, evtA]
+      })
 
 -- generic arbitrary, but not sure if this is helpful at all
 -- since we need well formed ordering of requests / cancel request
