@@ -38,6 +38,8 @@ data EventDetail = EventDetail {
   , eventDetailClientId :: ClientId
   , eventDetailTime     :: POSIXTime
   , eventDetailEvent    :: Event
+  , eventDetailBlock    :: Integer
+  , eventDetailAbsSlot  :: Slot
   }
   deriving stock (Show, Eq, Ord, Generic)
   deriving (FromJSON, ToJSON)

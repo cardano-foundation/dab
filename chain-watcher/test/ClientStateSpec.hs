@@ -36,6 +36,8 @@ evtA = EventDetail {
   , eventDetailClientId = sampleClientAId
   , eventDetailEvent = AddressFundsChanged "addrClientA"
   , eventDetailTime = 1612543814
+  , eventDetailAbsSlot = 1
+  , eventDetailBlock = 1
   }
 
 rollbackEvtA :: EventDetail
@@ -48,6 +50,8 @@ eventWithNoRequest =
   , eventDetailClientId = sampleClientAId
   , eventDetailEvent = UtxoProduced "noSuchAddr" ["noSuchTxHash"]
   , eventDetailTime = 1622543814
+  , eventDetailAbsSlot = 1
+  , eventDetailBlock = 1
   }
 
 spec_client_state :: Spec
