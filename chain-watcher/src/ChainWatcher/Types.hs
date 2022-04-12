@@ -38,6 +38,8 @@ data EventDetail = EventDetail {
   , eventDetailClientId :: ClientId
   , eventDetailTime     :: POSIXTime
   , eventDetailEvent    :: Event
+  , eventDetailBlock    :: Integer
+  , eventDetailAbsSlot  :: Slot
   }
   deriving stock (Show, Eq, Ord, Generic)
   deriving (FromJSON, ToJSON)
@@ -133,7 +135,7 @@ updateClientState evt cs =
     -- we add rollback event to pending and restore subscription
     Rollback _e | hasPastEvent evt cs ->
       Just $ cs
-        { clientStatePendingEvents = clientStatePendingEvents cs ++ [evt]
+        { clientStatePendingEvents = evt:clientStatePendingEvents cs
         , clientStateRequests = Data.Set.insert (eventDetailToRequestDetail evt) (clientStateRequests cs)
         }
 
@@ -147,7 +149,7 @@ updateClientState evt cs =
 
     _ | hasRequest (eventDetailEventId evt) cs ->
       Just $ cs
-        { clientStatePendingEvents = clientStatePendingEvents cs ++ [evt]
+        { clientStatePendingEvents = evt:clientStatePendingEvents cs
         , clientStateRequests =
             Data.Set.filter
               (\rd ->
@@ -184,7 +186,7 @@ takeEvents :: ClientState -> ([EventDetail], ClientState)
 takeEvents cs =
   let pending = clientStatePendingEvents cs
   in (pending, cs { clientStatePendingEvents = mempty
-                  , clientStatePastEvents = clientStatePastEvents cs ++ pending})
+                  , clientStatePastEvents = pending ++ clientStatePastEvents cs})
 
 routeEvent :: EventDetail -> Map ClientId ClientState -> Map ClientId ClientState
 routeEvent evt clients =

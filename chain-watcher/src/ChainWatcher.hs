@@ -19,7 +19,7 @@ import Colog.Core.IO (logStringStdout)
 
 import Data.Function (fix)
 import Data.Map (Map)
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, fromMaybe)
 import Data.Set (Set)
 import Data.Text (Text)
 
@@ -180,7 +180,7 @@ watch = do
         pure ()
 
       Left e -> rethrow e
-      Right [] -> pure ()
+      Right [] -> logs @Text "No new blocks"
       Right newBlocks -> do
         -- Process new blocks
         -- this whole thing shouldn't produce events until it fully succeeds
@@ -206,15 +206,16 @@ watch = do
             trackedTxs <- get @(Map Tx Integer)
 
             forM (Data.Set.toList reqs) $ \req -> do
+              let handle = handleRequest req blk
               case unRecurring $ req ^. request of
                 AddressFundsRequest addr | addr `Data.Set.member` addrs -> do
-                  handleRequest req $ AddressFundsChanged addr
+                  handle $ AddressFundsChanged addr
 
                 Ping -> do
-                  handleRequest req $ Pong blockSlot
+                  handle $ Pong blockSlot
 
                 SlotRequest s | s >= blockSlot -> do
-                  handleRequest req $ SlotReached blockSlot
+                  handle $ SlotReached blockSlot
 
                 UtxoProducedRequest addr | addr `Data.Set.member` addrs -> do
                   case Data.Map.lookup addr addrTxMap of
@@ -229,7 +230,7 @@ watch = do
                       logs $ "Utxos producing txs " <> showText utxoProducing
                       case catMaybes $ utxoProducing of
                         []   -> pure ()
-                        ptxs -> handleRequest req $ UtxoProduced addr ptxs
+                        ptxs -> handle $ UtxoProduced addr ptxs
 
                 UtxoSpentRequest txoutref@(txOutHash, txOutIndex)  -> do
                   txOutRefAddrs <- get @(Map TxOutRef Address)
@@ -250,7 +251,7 @@ watch = do
                             case relevant of
                               [_x] -> do
                                 logs $ "Utxo spending tx " <> showText tx <> " txo: " <> showText txoutref
-                                handleRequest req $ UtxoSpent txoutref tx
+                                handle $ UtxoSpent txoutref tx
                               _ -> pure ()
 
                 TransactionStatusRequest tx |    tx `Data.Set.member` blockTxHashes
@@ -259,11 +260,11 @@ watch = do
                   case (-) <$> blk ^. height <*> txinfo ^? blockHeight of
                       Nothing -> throwError $ RuntimeError "Block with no blockHeight"
                       Just depth | depth >= 10 -> do
-                        handleRequest req $ TransactionConfirmed tx
+                        handle $ TransactionConfirmed tx
                       Just depth | depth < 10 -> do
                         -- this can end up negative since another block might get added
                         -- in between our getBlockAffectedAddresses call and getTx call..
-                        handleRequest req $ TransactionTentative tx (min 0 depth)
+                        handle $ TransactionTentative tx (min 0 depth)
                         modify @(Map Tx Integer) $ Data.Map.insert tx (txinfo ^. blockHeight)
                       Just _depth -> throwError $ RuntimeError "Absurd tx depth"
 
@@ -274,10 +275,10 @@ watch = do
                       case (-) <$> blk ^. height <*> Just txBlockHeight of
                         Nothing -> throwError $ RuntimeError "Block with no blockHeight"
                         Just depth | depth >= 10 -> do
-                          handleRequest req $ TransactionConfirmed tx
+                          handle $ TransactionConfirmed tx
                           modify @(Map Tx Integer) $ Data.Map.delete tx
                         Just depth | depth < 10 -> do
-                          handleRequest req $ TransactionTentative tx depth
+                          handle $ TransactionTentative tx depth
                         Just _depth -> throwError $ RuntimeError "Absurd tx depth"
 
                 _ -> pure ()
@@ -311,23 +312,28 @@ watch = do
 newEventDetail
   :: RequestDetail
   -> POSIXTime
+  -> Block
   -> Event
   -> EventDetail
-newEventDetail rd ptime evt = EventDetail
+newEventDetail rd ptime blk evt = EventDetail
   { eventDetailEventId = requestDetailRequestId rd
   , eventDetailClientId = requestDetailClientId rd
   , eventDetailEvent = evt
   , eventDetailTime = ptime
+  , eventDetailAbsSlot = fromMaybe (error "Block with no slot") $ blk ^. slot
+  , eventDetailBlock = fromMaybe (error "Block with no height") $ blk ^. height
   }
 
 handleRequest
   :: ( Member Time effs
      , Member (Writer [(RequestDetail, EventDetail)]) effs)
   => RequestDetail
+  -> Block
   -> Event
   -> Eff effs ()
-handleRequest rd evt = do
-  getTime >>= \t -> tell [(rd, newEventDetail rd t evt)]
+handleRequest rd blk evt = do
+  getTime >>= \t -> tell
+    $ [(rd , newEventDetail rd t blk evt)]
 
 -- | Run server
 handleWatchSource

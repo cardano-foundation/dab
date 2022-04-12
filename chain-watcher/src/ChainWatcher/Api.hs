@@ -23,6 +23,11 @@ type ClientsAPI =
     :> Capture "client_id" ClientId
     :> ReqBody '[JSON] Request
     :> Post '[JSON] Integer
+   :<|>
+        "events"
+    :> Capture "client_id" ClientId
+    :> QueryParam "longpoll" Bool
+    :> Get '[JSON] [EventDetail]
 
 api :: Proxy API
 api = Proxy

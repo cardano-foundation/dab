@@ -51,6 +51,7 @@ handleClientsApi =
        handleNewClient
   :<|> handleRemoveClient
   :<|> handleNewRequest
+  :<|> handleEvents
 
 handleNewClient :: AppM ClientId
 handleNewClient = do
@@ -103,6 +104,21 @@ handleNewRequest cid req = do
        return (requestDetailRequestId r)
     )
     res
+
+handleEvents :: ClientId -> Maybe Bool -> AppM [EventDetail]
+handleEvents cid longPoll = do
+  tclients <- asks serverStateClients
+  res <- liftIO $ atomically $ do
+    clients <- readTVar tclients
+    case Data.Map.lookup cid clients of
+      Nothing -> pure Nothing
+      Just c -> do
+        let (!evts, newC) = takeEvents c
+        when (longPoll == Just True) $ guard (not . null $ evts)
+        modifyTVar tclients (Data.Map.adjust (pure newC) cid)
+        pure $ Just $ clientStatePastEvents newC
+
+  maybe (throwError err404) pure res
 
 handleSSE :: ClientId -> AppM EventSourceHdr
 handleSSE cid = do
