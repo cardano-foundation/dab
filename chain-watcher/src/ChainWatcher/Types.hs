@@ -14,7 +14,6 @@ import Data.UUID (UUID)
 
 import Blockfrost.Freer.Client (Address, Slot, TxHash)
 
-type Confirmations = Integer
 type Tx = TxHash
 type TxOutRef = (Tx, Integer)
 
@@ -24,7 +23,6 @@ data Event =
   | UtxoSpent TxOutRef Tx
   | UtxoProduced Address [Tx]
   | TransactionConfirmed Tx
-  | TransactionTentative Tx Confirmations
   | AddressFundsChanged Address
   | Rollback Event
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
@@ -83,7 +81,6 @@ eventToRequest (SlotReached s)            = SlotRequest s
 eventToRequest (UtxoSpent txoref _)       = UtxoSpentRequest txoref
 eventToRequest (UtxoProduced addr _)      = UtxoProducedRequest addr
 eventToRequest (TransactionConfirmed t)   = TransactionStatusRequest t
-eventToRequest (TransactionTentative t _) = TransactionStatusRequest t
 eventToRequest (AddressFundsChanged addr) = AddressFundsRequest addr
 eventToRequest (Rollback e)               = eventToRequest e
 

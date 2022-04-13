@@ -203,7 +203,6 @@ eventName (Pong _)                   = "Pong"
 eventName (SlotReached _)            = "SlotReached"
 eventName (UtxoSpent _ _)            = "UtxoSpent"
 eventName (UtxoProduced _ _)         = "UtxoProduced"
-eventName (TransactionTentative _ _) = "TransactionTentative"
 eventName (TransactionConfirmed _)   = "TransactionConfirmed"
 eventName (AddressFundsChanged _)    = "AddressFundsChanged"
 eventName (Rollback evt)             = "Rollback" ++ (eventName evt)

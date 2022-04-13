@@ -66,8 +66,6 @@ runWatcher qreqs qevts = fix $ \loop -> do
         . evalState @[Block] (pure startBlock)
         . evalState @(Set RequestDetail) mempty
         . evalState @(Map TxOutRef Address) mempty
-        . evalState @(Map Tx Integer) mempty
-        . runReader @Int 10
         . handleBlockfrostClient
         . runReader @(TQueue RequestDetail) qreqs
         . runReader @(TQueue EventDetail) qevts
@@ -111,7 +109,6 @@ watch :: forall m effs a .
   , Member (State Block) effs
   , Member (State [Block]) effs
   , Member (State (Map TxOutRef Address)) effs
-  , Member (State (Map Tx Integer)) effs
   , Member WatchSource effs
   , Member (Log Text) effs
   , Member Time effs
@@ -129,33 +126,48 @@ watch = do
     newReqs <- getRequests
     unless (Data.Set.null newReqs) $ do
       logs $ "New requests " <> showText newReqs
-      forM_ (Data.Set.toList newReqs) $ \req -> case unRecurring $ req ^. request of
-        TransactionStatusRequest tx -> do
-          etx <- tryError $ getTx tx
-          case etx of
-            Left BlockfrostNotFound -> pure ()
-            Left e -> rethrow e
-            Right txinfo -> modify @(Map Tx Integer) $ Data.Map.insert tx (txinfo ^. blockHeight)
+      handled <-
+        fmap snd
+        $ runWriter @[(RequestDetail, EventDetail)]
+        $ forM_ (Data.Set.toList newReqs) $ \req -> case unRecurring $ req ^. request of
+            TransactionStatusRequest tx -> do
+              txBlk <- tryError $ do
+                txInfo <- getTx tx
+                getBlock (Left $ txInfo ^. blockHeight)
 
-        -- look up the address holding the utxo so we can track it in block processing loop
-        UtxoSpentRequest txoutref@(tx, txoutindex) -> do
-          etx <- tryError $ getTxUtxos tx
-          case etx of
-            Left BlockfrostNotFound -> logs @Text $ "Transaction not found for TxOutRef " <> showText txoutref
-            Left e -> rethrow e
-            Right utxos -> do
-              let relevant = filter ((== txoutindex) . view outputIndex) (utxos ^. outputs)
-              case relevant of
-                [x] -> do
-                  let addr = x ^. address
-                  logs @Text $ "Adding utxo address to map of watched addresses " <> showText addr
-                  modify @(Map TxOutRef Address) $ Data.Map.insert txoutref addr
+              case txBlk of
+                Left BlockfrostNotFound -> pure ()
+                Left e -> rethrow e
+                Right blk -> do
+                  handleRequest req blk $ TransactionConfirmed tx
 
-                _ -> logs $ "Transaction output not found" <> showText txoutref
+            -- look up the address holding the utxo so we can track it in block processing loop
+            UtxoSpentRequest txoutref@(tx, txoutindex) -> do
+              etx <- tryError $ getTxUtxos tx
+              case etx of
+                Left BlockfrostNotFound -> logs @Text $ "Transaction not found for TxOutRef " <> showText txoutref
+                Left e -> rethrow e
+                Right utxos -> do
+                  let relevant = filter ((== txoutindex) . view outputIndex) (utxos ^. outputs)
+                  case relevant of
+                    [x] -> do
+                      let addr = x ^. address
+                      logs @Text $ "Adding utxo address to map of watched addresses " <> showText addr
+                      modify @(Map TxOutRef Address) $ Data.Map.insert txoutref addr
 
-        _ -> pure ()
+                    _ -> logs $ "Transaction output not found" <> showText txoutref
 
-      modify @(Set RequestDetail) $ Data.Set.union newReqs
+            _ -> pure ()
+
+      logs $ "Instantly handled " <> (showText $ length handled) <> " requests"
+      forM_ (map snd handled) produceEvent
+
+      modify @(Set RequestDetail) $
+        Data.Set.union
+          (Data.Set.difference
+            newReqs
+            (Data.Set.fromList $ map fst handled)
+          )
 
     next <- tryError $ getNextBlocks (Right $ currentBlock ^. hash)
     case next of
@@ -203,7 +215,6 @@ watch = do
                 blockTxHashes = Data.Set.fromList $ concatMap snd addrsTxs
 
             reqs <- get @(Set RequestDetail)
-            trackedTxs <- get @(Map Tx Integer)
 
             forM (Data.Set.toList reqs) $ \req -> do
               let handle = handleRequest req blk
@@ -254,32 +265,8 @@ watch = do
                                 handle $ UtxoSpent txoutref tx
                               _ -> pure ()
 
-                TransactionStatusRequest tx |    tx `Data.Set.member` blockTxHashes
-                                              && tx `Data.Map.notMember` trackedTxs -> do
-                  txinfo <- getTx tx
-                  case (-) <$> blk ^. height <*> txinfo ^? blockHeight of
-                      Nothing -> throwError $ RuntimeError "Block with no blockHeight"
-                      Just depth | depth >= 10 -> do
-                        handle $ TransactionConfirmed tx
-                      Just depth | depth < 10 -> do
-                        -- this can end up negative since another block might get added
-                        -- in between our getBlockAffectedAddresses call and getTx call..
-                        handle $ TransactionTentative tx (min 0 depth)
-                        modify @(Map Tx Integer) $ Data.Map.insert tx (txinfo ^. blockHeight)
-                      Just _depth -> throwError $ RuntimeError "Absurd tx depth"
-
-                TransactionStatusRequest tx | tx `Data.Map.member` trackedTxs -> do
-                  case Data.Map.lookup tx trackedTxs of
-                    Nothing -> pure ()
-                    Just txBlockHeight -> do
-                      case (-) <$> blk ^. height <*> Just txBlockHeight of
-                        Nothing -> throwError $ RuntimeError "Block with no blockHeight"
-                        Just depth | depth >= 10 -> do
-                          handle $ TransactionConfirmed tx
-                          modify @(Map Tx Integer) $ Data.Map.delete tx
-                        Just depth | depth < 10 -> do
-                          handle $ TransactionTentative tx depth
-                        Just _depth -> throwError $ RuntimeError "Absurd tx depth"
+                TransactionStatusRequest tx | tx `Data.Set.member` blockTxHashes ->
+                  handle $ TransactionConfirmed tx
 
                 _ -> pure ()
 
