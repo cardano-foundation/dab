@@ -8,7 +8,7 @@ import Control.Lens
 import Control.Monad.Reader
 
 import Data.Aeson (encode, toJSON)
-import Data.ByteString.Builder (integerDec, lazyByteString, string8)
+import Data.ByteString.Builder (intDec, lazyByteString, string8)
 import Data.Map (Map)
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Data.UUID.V4 (nextRandom)
@@ -195,7 +195,7 @@ eventDetailAsServerEvent :: EventDetail -> ServerEvent
 eventDetailAsServerEvent ed =
   ServerEvent
     (Just $ string8 $ eventName $ ed ^. event)
-    (Just $ integerDec $ ed ^. eventId)
+    (Just $ intDec . (\(EventId i _uuid) -> i) $ ed ^. eventId)
     [lazyByteString $ encode $ toJSON ed]
 
 eventName :: Event -> String

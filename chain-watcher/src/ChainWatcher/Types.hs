@@ -7,10 +7,14 @@ import Data.Map (Map)
 import qualified Data.Map
 import Data.Set (Set)
 import qualified Data.Set
+import Data.Aeson
 import Deriving.Aeson
 
 import Data.Time.Clock.POSIX (POSIXTime)
 import Data.UUID (UUID)
+import qualified Data.Text
+import qualified Data.UUID
+import qualified Text.Read
 
 import Blockfrost.Freer.Client (Address, Slot, TxHash)
 
@@ -30,9 +34,23 @@ data Event =
 makePrisms ''Event
 
 type ClientId = UUID
+data EventId = EventId Int UUID
+  deriving stock (Show, Eq, Ord, Generic)
+
+instance ToJSON EventId where
+  toJSON (EventId i ui) = toJSON $ (show i) ++ "." ++ Data.UUID.toString ui
+
+instance FromJSON EventId where
+  parseJSON = withText "EventId" $ \t -> do
+    let s = Data.Text.unpack t
+        iPart = takeWhile (/='.') s
+    i <- maybe (fail "Can't read integer part of EventId") pure $ Text.Read.readMaybe iPart
+    ui <- maybe (fail "Can't read UUID part of EventId") pure $ Data.UUID.fromString $ drop (length iPart + 1) s
+    pure $ EventId i ui
 
 data EventDetail = EventDetail {
-    eventDetailEventId  :: Integer
+    eventDetailRequestId  :: Integer
+  , eventDetailEventId  :: EventId
   , eventDetailClientId :: ClientId
   , eventDetailTime     :: POSIXTime
   , eventDetailEvent    :: Event
@@ -86,7 +104,7 @@ eventToRequest (Rollback e)               = eventToRequest e
 
 eventDetailToRequestDetail :: EventDetail -> RequestDetail
 eventDetailToRequestDetail ed = RequestDetail {
-    requestDetailRequestId = eventDetailEventId ed
+    requestDetailRequestId = eventDetailRequestId ed
   , requestDetailClientId = eventDetailClientId ed
   , requestDetailRequest = eventToRequest $ eventDetailEvent ed
   , requestDetailTime = eventDetailTime ed }
@@ -144,13 +162,13 @@ updateClientState evt cs =
         , clientStateRequests = Data.Set.insert (eventDetailToRequestDetail evt) (clientStateRequests cs)
         }
 
-    _ | hasRequest (eventDetailEventId evt) cs ->
+    _ | hasRequest (eventDetailRequestId evt) cs ->
       Just $ cs
         { clientStatePendingEvents = evt:clientStatePendingEvents cs
         , clientStateRequests =
             Data.Set.filter
               (\rd ->
-                 requestDetailRequestId rd /= eventDetailEventId evt
+                 requestDetailRequestId rd /= eventDetailRequestId evt
               || recurring rd
               )
               (clientStateRequests cs)

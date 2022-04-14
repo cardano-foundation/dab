@@ -63,6 +63,7 @@ library
                       , ChainWatcher.Types
                       , Control.Monad.Freer.Log
                       , Control.Monad.Freer.Time
+                      , Control.Monad.Freer.UUID
    build-depends:       base >= 4.7 && < 5
                       , blockfrost-freer-client
                       , co-log-core

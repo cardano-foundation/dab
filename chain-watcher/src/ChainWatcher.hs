@@ -8,11 +8,13 @@ import Control.Lens
 import Control.Monad
 import Control.Monad.Freer
 import Control.Monad.Freer.Error
+import Control.Monad.Freer.Fresh
 import Control.Monad.Freer.Log
 import Control.Monad.Freer.Reader hiding (asks)
 import Control.Monad.Freer.State
 import Control.Monad.Freer.Time
 import Control.Monad.Freer.Writer
+import Control.Monad.Freer.UUID
 import Control.Monad.IO.Class (MonadIO (liftIO))
 
 import Colog.Core.IO (logStringStdout)
@@ -66,6 +68,8 @@ runWatcher qreqs qevts = fix $ \loop -> do
         . evalState @[Block] (pure startBlock)
         . evalState @(Set RequestDetail) mempty
         . evalState @(Map TxOutRef Address) mempty
+        . evalFresh 0
+        . handleUUIDEffect
         . handleBlockfrostClient
         . runReader @(TQueue RequestDetail) qreqs
         . runReader @(TQueue EventDetail) qevts
@@ -112,6 +116,8 @@ watch :: forall m effs a .
   , Member WatchSource effs
   , Member (Log Text) effs
   , Member Time effs
+  , Member UUIDEffect effs
+  , Member Fresh effs
   , Member (Error WatcherError) effs
   )
  => Eff effs a
@@ -299,11 +305,13 @@ watch = do
 newEventDetail
   :: RequestDetail
   -> POSIXTime
+  -> EventId
   -> Block
   -> Event
   -> EventDetail
-newEventDetail rd ptime blk evt = EventDetail
-  { eventDetailEventId = requestDetailRequestId rd
+newEventDetail rd ptime eid blk evt = EventDetail
+  { eventDetailRequestId = requestDetailRequestId rd
+  , eventDetailEventId = eid
   , eventDetailClientId = requestDetailClientId rd
   , eventDetailEvent = evt
   , eventDetailTime = ptime
@@ -313,14 +321,19 @@ newEventDetail rd ptime blk evt = EventDetail
 
 handleRequest
   :: ( Member Time effs
-     , Member (Writer [(RequestDetail, EventDetail)]) effs)
+     , Member (Writer [(RequestDetail, EventDetail)]) effs
+     , Member UUIDEffect effs
+     , Member Fresh effs
+     )
   => RequestDetail
   -> Block
   -> Event
   -> Eff effs ()
 handleRequest rd blk evt = do
+  freshId <- fresh
+  uuid <- uuidNextRandom
   getTime >>= \t -> tell
-    $ [(rd , newEventDetail rd t blk evt)]
+    $ [(rd , newEventDetail rd t (EventId freshId uuid) blk evt)]
 
 -- | Run server
 handleWatchSource

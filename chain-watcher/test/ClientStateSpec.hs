@@ -15,7 +15,8 @@ import Test.Tasty.QuickCheck
 import Blockfrost.Freer.Client (Address, Slot (..), TxHash)
 
 sampleClientAId :: UUID
-sampleClientAId = fromMaybe (error "absurd") $ fromString "c2cc10e1-57d6-4b6f-9899-38d972112d8c"
+sampleClientAId = fromJust $ fromString "c2cc10e1-57d6-4b6f-9899-38d972112d8c"
+
 
 reqA = RequestDetail {
     requestDetailRequestId = 0
@@ -32,7 +33,8 @@ sampleClientA = newClientState
   }
 
 evtA = EventDetail {
-    eventDetailEventId = 0
+    eventDetailRequestId = 0
+  , eventDetailEventId = EventId 0 $ fromJust $ fromString "a2cc10e1-57d6-4b6f-9899-38d972112d8c"
   , eventDetailClientId = sampleClientAId
   , eventDetailEvent = AddressFundsChanged "addrClientA"
   , eventDetailTime = 1612543814
@@ -51,7 +53,8 @@ reqB = RequestDetail {
   }
 
 evtB = EventDetail {
-    eventDetailEventId = 1
+    eventDetailRequestId = 1
+  , eventDetailEventId = EventId 1 $ fromJust $ fromString "b2cc10e1-57d6-4b6f-9899-38d972112d8c"
   , eventDetailClientId = sampleClientAId
   , eventDetailEvent = SlotReached 2
   , eventDetailTime = 1612543815
@@ -67,7 +70,8 @@ sampleClientB = newClientState
 eventWithNoRequest :: EventDetail
 eventWithNoRequest =
    EventDetail {
-    eventDetailEventId = -1
+    eventDetailRequestId = -1
+  , eventDetailEventId = EventId 0 $ fromJust $ fromString "c2cc10e1-57d6-4b6f-9899-38d972112d8c"
   , eventDetailClientId = sampleClientAId
   , eventDetailEvent = UtxoProduced "noSuchAddr" ["noSuchTxHash"]
   , eventDetailTime = 1622543814
