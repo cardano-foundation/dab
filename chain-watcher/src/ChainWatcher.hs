@@ -58,8 +58,16 @@ runWatcher qreqs qevts = fix $ \loop -> do
   startBlock' <- runBlockfrost prj getLatestBlock
   -- should look-up N-depth previous blocks and use Nth as startBlock
   -- in case that the one we get from getLatestBlock disappears
+
+  let delayAndLoop = do
+        putStrLn "Restarting"
+        Control.Concurrent.threadDelay 10_000_000
+        loop
+
   case startBlock' of
-    Left e -> error $ "Can't fetch latest block, error was " ++ show e
+    Left e -> do
+      putStrLn $ "Can't fetch latest block, error was " ++ show e
+      delayAndLoop
     Right startBlock -> do
       blkAcid <- openLocalState ([startBlock])
       handleBlockfrostClient <- defaultBlockfrostHandler
@@ -82,15 +90,11 @@ runWatcher qreqs qevts = fix $ \loop -> do
       case res of
         Right (Left (be :: BlockfrostError)) -> do
           putStrLn $ "Exited with blockfrost error" ++ show be
-          putStrLn "Restarting"
-          Control.Concurrent.threadDelay 10_000_000
-          loop
+          delayAndLoop
         Right _ -> pure ()
         Left (e :: WatcherError) -> do
           putStrLn $ "Exited with error " ++ show e
-          putStrLn "Restarting"
-          Control.Concurrent.threadDelay 10_000_000
-          loop
+          delayAndLoop
 
 maxRollbackSize :: Int
 maxRollbackSize = 2160
