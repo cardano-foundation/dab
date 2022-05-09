@@ -7,6 +7,7 @@ import Control.Concurrent.STM
 import Control.Lens
 import Control.Monad
 import Control.Monad.Freer
+import Control.Monad.Freer.AcidState
 import Control.Monad.Freer.Error
 import Control.Monad.Freer.Fresh
 import Control.Monad.Freer.Log
@@ -32,6 +33,7 @@ import qualified Data.Text
 import Blockfrost.Freer.Client hiding (api)
 
 import ChainWatcher.Server
+import ChainWatcher.State
 import ChainWatcher.Types
 
 main :: IO ()
@@ -59,13 +61,13 @@ runWatcher qreqs qevts = fix $ \loop -> do
   case startBlock' of
     Left e -> error $ "Can't fetch latest block, error was " ++ show e
     Right startBlock -> do
+      blkAcid <- openLocalState ([startBlock])
       handleBlockfrostClient <- defaultBlockfrostHandler
       res <- runM
         . runError @WatcherError
         . runLogAction (contramap Data.Text.unpack logStringStdout)
         . runTime
-        . evalState @Block startBlock
-        . evalState @[Block] (pure startBlock)
+        . evalAcidState @[Block] blkAcid QueryState WriteState
         . evalState @(Set RequestDetail) mempty
         . evalState @(Map TxOutRef Address) mempty
         . evalFresh 0
@@ -110,7 +112,6 @@ watch :: forall m effs a .
   , MonadIO m
   , Members ClientEffects effs
   , Member (State (Set RequestDetail)) effs
-  , Member (State Block) effs
   , Member (State [Block]) effs
   , Member (State (Map TxOutRef Address)) effs
   , Member WatchSource effs
@@ -122,12 +123,11 @@ watch :: forall m effs a .
   )
  => Eff effs a
 watch = do
-  startBlock <- get @Block
+  startBlock <- head <$> get @[Block]
   logs @Text $ "Watcher thread started at block " <> (startBlock ^. hash . coerced)
 
-
   forever $ do
-    currentBlock <- get @Block
+    currentBlock <- head <$> get @[Block]
 
     newReqs <- getRequests
     unless (Data.Set.null newReqs) $ do
@@ -191,7 +191,6 @@ watch = do
 
         (found, new, dropped) <- findExisting prev []
         logs @Text $ "Found previous existing block " <> (found ^. hash . coerced)
-        put @Block found
         put @[Block] new
         logs @Text $ "Dropped " <> (showText $ length dropped) <> " blocks"
         -- onRollback
@@ -280,7 +279,6 @@ watch = do
           Left e -> do
             logs $ "Error caught during new block processing loop " <> (showText e)
           Right handled -> do
-            put @Block $ Prelude.last newBlocks
             modify @[Block] $ \xs -> take maxRollbackSize $ reverse newBlocks ++ xs
 
             logs $ "Produced " <> (showText $ length handled) <> " events"

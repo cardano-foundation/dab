@@ -61,12 +61,17 @@ library
                       , ChainWatcher.Api
                       , ChainWatcher.Server
                       , ChainWatcher.Types
+                      , ChainWatcher.State
+                      , Control.Monad.Freer.AcidState
                       , Control.Monad.Freer.Log
                       , Control.Monad.Freer.Time
                       , Control.Monad.Freer.UUID
    build-depends:       base >= 4.7 && < 5
                       , blockfrost-freer-client
                       , co-log-core
+                      , acid-state
+                      , safecopy
+                      , safe-money
                       , aeson
                       , deriving-aeson
                       , freer-simple
