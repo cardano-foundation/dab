@@ -1,0 +1,26 @@
+cabal-version:      2.2
+name:               servant-swagger-ui-blaze
+version:            0.6.6.6
+synopsis:           Servant swagger ui: ReDoc theme using Blaze and ReDoc from CDN
+category:           Web, Servant, Swagger
+license:            Apache-2.0
+license-file:       LICENSE
+author:             blockfrost.io
+maintainer:         srk@48.io
+copyright:          2021 blockfrost.io
+build-type:         Simple
+
+library
+  hs-source-dirs:   src
+  ghc-options:      -Wall
+  build-depends:    servant-swagger-ui-core >=0.3.6 && <0.4
+  build-depends:
+      base             >=4.7      && <4.16
+    , blaze-html       >=0.9      && <0.10
+    , servant          >=0.14     && <0.19
+    , servant-server   >=0.14     && <0.19
+    , servant-blaze    >=0.9      && <0.10
+    , text             >=1.2.3.0  && <1.3
+
+  exposed-modules:  Servant.Swagger.UI.Blaze
+  default-language: Haskell2010

@@ -1,6 +1,8 @@
 packages:
   ./blockfrost-freer-client
   ./chain-watcher
+  ./servant-swagger-ui-blaze
+  ./servant-swagger-ui-redoc-blaze
 
 -- until v0.4 is in snapshot
 source-repository-package

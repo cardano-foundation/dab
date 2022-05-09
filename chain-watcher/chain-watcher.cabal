@@ -82,6 +82,7 @@ library
                       , pretty-simple
                       , containers
                       , mtl
+                      , openapi3
                       , servant
                       , servant-server
                       , time
