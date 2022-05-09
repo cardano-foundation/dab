@@ -20,14 +20,17 @@ let
     # These arguments passed to nixpkgs, include some patches and also
     # the haskell.nix functionality itself as an overlay.
     haskellNix.nixpkgsArgs;
-in pkgs.haskell-nix.project {
-  # 'cleanGit' cleans a source directory based on the files known by git
-  src = pkgs.haskell-nix.haskellLib.cleanGit {
-    name = "dab";
-    src = ./.;
+  project = pkgs.haskell-nix.project {
+    # 'cleanGit' cleans a source directory based on the files known by git
+    src = pkgs.haskell-nix.haskellLib.cleanGit {
+      name = "dab";
+      src = ./.;
+    };
+    # Specify the GHC version to use.
+    compiler-nix-name = "ghc8107"; # Not required for `stack.yaml` based projects.
+    # both stack.yaml and cabal.project present
+    projectFileName = "cabal.project";
   };
-  # Specify the GHC version to use.
-  compiler-nix-name = "ghc8107"; # Not required for `stack.yaml` based projects.
-  # both stack.yaml and cabal.project present
-  projectFileName = "cabal.project";
-}
+in
+  project
+  // { container = pkgs.callPackage ./nix/container.nix { inherit project; }; }
