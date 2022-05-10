@@ -29,6 +29,7 @@ import Servant
 import Servant.API.EventStream
 
 import ChainWatcher.Api
+import ChainWatcher.Lens
 import ChainWatcher.Types
 
 data ServerState = ServerState

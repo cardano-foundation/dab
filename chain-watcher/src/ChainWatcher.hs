@@ -32,6 +32,7 @@ import qualified Data.Text
 
 import Blockfrost.Freer.Client hiding (api)
 
+import ChainWatcher.Lens
 import ChainWatcher.Server
 import ChainWatcher.State
 import ChainWatcher.Types

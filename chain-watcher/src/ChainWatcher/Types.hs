@@ -1,7 +1,28 @@
 
-module ChainWatcher.Types where
+module ChainWatcher.Types
+  ( Address(..)
+  , Slot(..)
+  , TxHash(..)
+  , TxOutRef(..)
+  , Event(..)
+  , EventId(..)
+  , EventDetail(..)
+  , Request(..)
+  , unRecurring
+  , RequestDetail(..)
+  , recurring
+  , ClientId(..)
+  , ClientState(..)
+  , newClientState
+  , updateClientState
+  , routeEvent
+  , takeEvents
+  , WatchSource(..)
+  , getRequests
+  , produceEvent
+  )
+  where
 
-import Control.Lens (makeFields, makePrisms)
 import Control.Monad.Freer.TH (makeEffect)
 import Data.Map (Map)
 import qualified Data.Map
@@ -31,9 +52,8 @@ data Event =
   | Rollback Event
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
-makePrisms ''Event
-
 type ClientId = UUID
+
 data EventId = EventId Int UUID
   deriving stock (Show, Eq, Ord, Generic)
 
@@ -61,8 +81,6 @@ data EventDetail = EventDetail {
   deriving (FromJSON, ToJSON)
   via CustomJSON '[FieldLabelModifier '[StripPrefix "eventDetail", CamelToSnake]] EventDetail
 
-makeFields ''EventDetail
-
 data Request =
     Ping
   | SlotRequest Slot
@@ -73,11 +91,6 @@ data Request =
   | Cancel Request -- ^ Cancel previous request
   | Recurring Request -- ^ Recurring request is not removed automatically
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
-
--- possibly
--- TxOut status change
-
-makePrisms ''Request
 
 unRecurring :: Request -> Request
 unRecurring (Recurring r) = r
@@ -90,8 +103,6 @@ data RequestDetail = RequestDetail {
   , requestDetailTime      :: POSIXTime
   }
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
-
-makeFields ''RequestDetail
 
 eventToRequest :: Event -> Request
 eventToRequest (Pong _s)                  = Ping

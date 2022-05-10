@@ -59,9 +59,10 @@ library
    hs-source-dirs:      src
    exposed-modules:     ChainWatcher
                       , ChainWatcher.Api
+                      , ChainWatcher.Lens
                       , ChainWatcher.Server
-                      , ChainWatcher.Types
                       , ChainWatcher.State
+                      , ChainWatcher.Types
                       , Control.Monad.Freer.AcidState
                       , Control.Monad.Freer.Log
                       , Control.Monad.Freer.Time
