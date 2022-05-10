@@ -89,6 +89,8 @@ library
                       , servant
                       , servant-openapi3
                       , servant-server
+                      , servant-swagger-ui-blaze
+                      , servant-swagger-ui-redoc-blaze
                       , time
                       , yaml
                       , uuid
