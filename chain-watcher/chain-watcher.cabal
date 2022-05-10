@@ -60,6 +60,7 @@ library
    exposed-modules:     ChainWatcher
                       , ChainWatcher.Api
                       , ChainWatcher.Lens
+                      , ChainWatcher.OpenApi
                       , ChainWatcher.Server
                       , ChainWatcher.State
                       , ChainWatcher.Types
@@ -74,6 +75,7 @@ library
                       , safecopy
                       , safe-money
                       , aeson
+                      , aeson-pretty
                       , deriving-aeson
                       , freer-simple
                       , async
@@ -85,8 +87,10 @@ library
                       , mtl
                       , openapi3
                       , servant
+                      , servant-openapi3
                       , servant-server
                       , time
+                      , yaml
                       , uuid
 		      -- streams
                       , servant-event-stream
