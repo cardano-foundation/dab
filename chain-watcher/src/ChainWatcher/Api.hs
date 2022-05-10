@@ -9,7 +9,6 @@ type API =
        "healthcheck" :> Get '[JSON] Bool
   :<|> "sse" :> Capture "client_id" ClientId :> ServerSentEvents
   :<|> "clients" :> ClientsAPI
-  :<|> "demo" :> Raw
 
 type ClientsAPI =
         "new"

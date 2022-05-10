@@ -53,7 +53,6 @@ server =
        pure True
   :<|> handleSSE
   :<|> handleClientsApi
-  :<|> serveDirectoryWebApp "static"
 
 handleClientsApi :: ServerT ClientsAPI AppM
 handleClientsApi =
@@ -200,7 +199,10 @@ docServer =
        :<|> redocSchemaUIServer "ChainWatcher API - ReDoc" chainwatcherSwagger
        :<|> pure chainwatcherSwagger
 
-type CombinedAPI = API :<|> DocsAPI
+type CombinedAPI =
+       API
+  :<|> DocsAPI
+  :<|> "demo" :> Raw
 
 -- * Combined
 
@@ -216,6 +218,7 @@ combinedServer clients qreqs =
         (ServerState clients qreqs))
     server
   :<|> docServer
+  :<|> serveDirectoryWebApp "static"
 
 runServer
   :: TVar (Map ClientId ClientState)
