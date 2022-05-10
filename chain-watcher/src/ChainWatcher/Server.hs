@@ -65,9 +65,9 @@ handleNewClient :: AppM ClientId
 handleNewClient = do
   tclients <- asks serverStateClients
   liftIO $ do
-    uuid <- nextRandom
-    atomically $ modifyTVar tclients (Data.Map.insert uuid newClientState)
-    pure uuid
+    cId <- ClientId <$> nextRandom
+    atomically $ modifyTVar tclients (Data.Map.insert cId newClientState)
+    pure cId
 
 handleRemoveClient :: ClientId -> AppM ()
 handleRemoveClient cid = do

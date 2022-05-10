@@ -61,6 +61,7 @@ library
                       , ChainWatcher.Api
                       , ChainWatcher.Lens
                       , ChainWatcher.OpenApi
+                      , ChainWatcher.OpenApi.Util
                       , ChainWatcher.Server
                       , ChainWatcher.State
                       , ChainWatcher.Types
@@ -88,6 +89,7 @@ library
                       , openapi3
                       , servant
                       , servant-openapi3
+                      , servant-docs
                       , servant-server
                       , servant-swagger-ui-blaze
                       , servant-swagger-ui-redoc-blaze

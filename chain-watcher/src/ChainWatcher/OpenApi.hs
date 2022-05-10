@@ -1,3 +1,4 @@
+{-# LANGUAGE StandaloneDeriving #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module ChainWatcher.OpenApi where
@@ -10,18 +11,47 @@ import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import Data.Yaml (encodeFile)
 import Servant.API.EventStream
+import Servant.Docs (ToSample (toSamples), singleSample)
 import Servant.OpenApi
 
 import ChainWatcher.Api (api)
 import ChainWatcher.Types
+import ChainWatcher.OpenApi.Util
 
-instance ToSchema Address
-instance ToSchema Slot
-instance ToSchema TxHash
+import Data.Maybe (fromJust)
+import Data.UUID (UUID, fromString)
+
+deriving newtype instance ToSchema Address
+deriving newtype instance ToSchema Slot
+deriving newtype instance ToSchema TxHash
 
 instance ToSchema Event
 instance ToSchema EventId
-instance ToSchema EventDetail
+
+sampleClientId :: ClientId
+sampleClientId = ClientId $ fromJust $ fromString "c2cc10e1-57d6-4b6f-9899-38d972112d8c"
+
+deriving newtype instance ToParamSchema ClientId
+deriving newtype instance ToSchema ClientId
+
+sampleUUID :: UUID
+sampleUUID = fromJust $ fromString "b2cc10e1-57d6-4b6f-9899-38d972112d8c"
+
+instance ToSample EventDetail where
+  toSamples = pure $ singleSample
+    EventDetail
+      { eventDetailRequestId = 0
+      , eventDetailEventId   = EventId 0 sampleUUID
+      , eventDetailClientId  = sampleClientId
+      , eventDetailTime      = 1612543814
+      , eventDetailEvent     = AddressFundsChanged "addrClientA"
+      , eventDetailBlock     = 1
+      , eventDetailAbsSlot   = 1
+      }
+
+instance ToSchema EventDetail where
+  declareNamedSchema = genericDeclareNamedSchemaPrefix "eventDetail"
+
 instance ToSchema Request
 
 instance HasOpenApi (ServerSentEvents) where

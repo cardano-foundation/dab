@@ -37,7 +37,8 @@ import qualified Data.Text
 import qualified Data.UUID
 import qualified Text.Read
 
-import Blockfrost.Freer.Client (Address, Slot, TxHash)
+import Blockfrost.Freer.Client (Address(..), Slot(..), TxHash(..))
+import Servant.API (FromHttpApiData (..), ToHttpApiData (..))
 
 type Tx = TxHash
 type TxOutRef = (Tx, Integer)
@@ -52,7 +53,10 @@ data Event =
   | Rollback Event
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
-type ClientId = UUID
+newtype ClientId = ClientId UUID
+  deriving stock (Show, Eq, Ord, Generic)
+  deriving newtype (ToJSON, FromJSON)
+  deriving newtype (FromHttpApiData, ToHttpApiData)
 
 data EventId = EventId Int UUID
   deriving stock (Show, Eq, Ord, Generic)

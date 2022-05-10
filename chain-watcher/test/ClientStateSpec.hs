@@ -14,8 +14,8 @@ import Test.Tasty.QuickCheck
 -- temp
 import Blockfrost.Freer.Client (Address, Slot (..), TxHash)
 
-sampleClientAId :: UUID
-sampleClientAId = fromJust $ fromString "c2cc10e1-57d6-4b6f-9899-38d972112d8c"
+sampleClientAId :: ClientId
+sampleClientAId = ClientId $ fromJust $ fromString "c2cc10e1-57d6-4b6f-9899-38d972112d8c"
 
 
 reqA = RequestDetail {
