@@ -6,27 +6,42 @@ import Servant
 import Servant.API.EventStream
 
 type API =
-       "healthcheck" :> Get '[JSON] Bool
-  :<|> "sse" :> Capture "client_id" ClientId :> ServerSentEvents
-  :<|> "clients" :> ClientsAPI
+          Summary "Check health"
+       :> "healthcheck"
+       :> Get '[JSON] Bool
+  :<|>
+       "sse"
+       :> Capture "client_id" ClientId
+       :> ServerSentEvents
+  :<|>
+       "clients"
+       :> ClientsAPI
 
 type ClientsAPI =
-        "new"
-    :> Post '[JSON] ClientId
+           Summary "New client"
+        :> Description "Create new client"
+        :> "new"
+        :> Post '[JSON] ClientId
    :<|>
-        "remove"
-    :> Capture "client_id" ClientId
-    :> Post '[JSON] ()
+           Summary "Remove client"
+        :> Description "Delete client and all its events"
+        :> "remove"
+        :> Capture "client_id" ClientId
+        :> Post '[JSON] ()
    :<|>
-        "request"
-    :> Capture "client_id" ClientId
-    :> ReqBody '[JSON] Request
-    :> Post '[JSON] Integer
+           Summary "Create request"
+        :> Description "Create new request for specific client"
+        :> "request"
+        :> Capture "client_id" ClientId
+        :> ReqBody '[JSON] Request
+        :> Post '[JSON] Integer
    :<|>
-        "events"
-    :> Capture "client_id" ClientId
-    :> QueryParam "longpoll" Bool
-    :> Get '[JSON] [EventDetail]
+           Summary "Get events"
+        :> Description "Query events belonging to specific client"
+        :> "events"
+        :> Capture "client_id" ClientId
+        :> QueryParam "longpoll" Bool
+        :> Get '[JSON] [EventDetail]
 
 api :: Proxy API
 api = Proxy
