@@ -140,7 +140,7 @@ watch = do
       handled <-
         fmap snd
         $ runWriter @[(RequestDetail, EventDetail)]
-        $ forM_ (Data.Set.toList newReqs) $ \req -> case unRecurring $ req ^. request of
+        $ forM_ (Data.Set.toList newReqs) $ \req -> case req ^. request of
             TransactionStatusRequest tx -> do
               txBlk <- tryError $ do
                 txInfo <- getTx tx
@@ -228,17 +228,17 @@ watch = do
 
             forM (Data.Set.toList reqs) $ \req -> do
               let handle = handleRequest req blk
-              case unRecurring $ req ^. request of
-                AddressFundsRequest addr | addr `Data.Set.member` addrs -> do
+              case req ^. request of
+                AddressFundsRequest _rec addr | addr `Data.Set.member` addrs -> do
                   handle $ AddressFundsChanged addr
 
-                Ping -> do
+                Ping _rec -> do
                   handle $ Pong blockSlot
 
                 SlotRequest s | s >= blockSlot -> do
                   handle $ SlotReached blockSlot
 
-                UtxoProducedRequest addr | addr `Data.Set.member` addrs -> do
+                UtxoProducedRequest _rec addr | addr `Data.Set.member` addrs -> do
                   case Data.Map.lookup addr addrTxMap of
                     Nothing -> pure () -- can't happen but we should log it
                     Just txs -> do
@@ -291,7 +291,7 @@ watch = do
 
             modify @(Set RequestDetail)
               (flip Data.Set.difference
-                 (Data.Set.filter (not . recurring) handledReqs))
+                 (Data.Set.filter (not . isRecurring) handledReqs))
 
             let spentTxOutRefs =
                     catMaybes
@@ -320,6 +320,7 @@ newEventDetail rd ptime eid blk evt isRollback
   , eventDetailClientId = requestDetailClientId rd
   , eventDetailEvent = evt
   , eventDetailRollback = isRollback
+  , eventDetailRecurring = isRecurring rd
   , eventDetailTime = ptime
   , eventDetailAbsSlot = fromMaybe (error "Block with no slot") $ blk ^. slot
   , eventDetailBlock = fromMaybe (error "Block with no height") $ blk ^. height

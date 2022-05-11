@@ -8,9 +8,8 @@ module ChainWatcher.Types
   , EventId(..)
   , EventDetail(..)
   , Request(..)
-  , unRecurring
   , RequestDetail(..)
-  , recurring
+  , isRecurring
   , ClientId(..)
   , ClientState(..)
   , newClientState
@@ -78,6 +77,7 @@ data EventDetail = EventDetail {
   , eventDetailTime     :: POSIXTime
   , eventDetailEvent    :: Event
   , eventDetailRollback :: Bool
+  , eventDetailRecurring :: Bool
   , eventDetailBlock    :: Integer
   , eventDetailAbsSlot  :: Slot
   }
@@ -86,19 +86,13 @@ data EventDetail = EventDetail {
   via CustomJSON '[FieldLabelModifier '[StripPrefix "eventDetail", CamelToSnake]] EventDetail
 
 data Request =
-    Ping
+    Ping Bool
   | SlotRequest Slot
   | UtxoSpentRequest TxOutRef
-  | UtxoProducedRequest Address
+  | UtxoProducedRequest Bool Address
   | TransactionStatusRequest Tx
-  | AddressFundsRequest Address
-  | Cancel Request -- ^ Cancel previous request
-  | Recurring Request -- ^ Recurring request is not removed automatically
+  | AddressFundsRequest Bool Address
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
-
-unRecurring :: Request -> Request
-unRecurring (Recurring r) = r
-unRecurring r             = r
 
 data RequestDetail = RequestDetail {
     requestDetailRequestId :: Integer
@@ -108,20 +102,22 @@ data RequestDetail = RequestDetail {
   }
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
-eventToRequest :: Event -> Request
-eventToRequest (Pong _s)                  = Ping
-eventToRequest (SlotReached s)            = SlotRequest s
-eventToRequest (UtxoSpent txoref _)       = UtxoSpentRequest txoref
-eventToRequest (UtxoProduced addr _)      = UtxoProducedRequest addr
-eventToRequest (TransactionConfirmed t)   = TransactionStatusRequest t
-eventToRequest (AddressFundsChanged addr) = AddressFundsRequest addr
+eventToRequest :: Bool -> Event -> Request
+eventToRequest r (Pong _s)                  = Ping r
+eventToRequest _ (SlotReached s)            = SlotRequest s
+eventToRequest _ (UtxoSpent txoref _)       = UtxoSpentRequest txoref
+eventToRequest r (UtxoProduced addr _)      = UtxoProducedRequest r addr
+eventToRequest _ (TransactionConfirmed t)   = TransactionStatusRequest t
+eventToRequest r (AddressFundsChanged addr) = AddressFundsRequest r addr
 
 eventDetailToRequestDetail :: EventDetail -> RequestDetail
-eventDetailToRequestDetail ed = RequestDetail {
-    requestDetailRequestId = eventDetailRequestId ed
+eventDetailToRequestDetail ed =
+  RequestDetail
+  { requestDetailRequestId = eventDetailRequestId ed
   , requestDetailClientId = eventDetailClientId ed
-  , requestDetailRequest = eventToRequest $ eventDetailEvent ed
-  , requestDetailTime = eventDetailTime ed }
+  , requestDetailRequest = eventToRequest (eventDetailRecurring ed) $ eventDetailEvent ed
+  , requestDetailTime = eventDetailTime ed
+  }
 
 data WatchSource a where
   GetRequests :: WatchSource (Set RequestDetail)
@@ -183,17 +179,19 @@ updateClientState evt cs =
             Data.Set.filter
               (\rd ->
                  requestDetailRequestId rd /= eventDetailRequestId evt
-              || recurring rd
+              || isRecurring rd
               )
               (clientStateRequests cs)
         }
     _ | otherwise -> Nothing
 
-recurring :: RequestDetail -> Bool
-recurring RequestDetail { requestDetailRequest = Recurring _ } = True
-recurring _                                                    = False
+isRecurring :: RequestDetail -> Bool
+isRecurring rd = case requestDetailRequest rd of
+  Ping rec -> rec
+  UtxoProducedRequest rec _ -> rec
+  AddressFundsRequest rec _ -> rec
+  _ -> False
 
-hasRequest :: Integer -> ClientState -> Bool
 hasRequest rid =
   not
   . Data.Set.null

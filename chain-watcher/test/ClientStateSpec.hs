@@ -21,11 +21,11 @@ sampleClientAId = ClientId $ fromJust $ fromString "c2cc10e1-57d6-4b6f-9899-38d9
 reqA = RequestDetail {
     requestDetailRequestId = 0
   , requestDetailClientId = sampleClientAId
-  , requestDetailRequest = AddressFundsRequest "addrClientA"
+  , requestDetailRequest = AddressFundsRequest False "addrClientA"
   , requestDetailTime = 1612543814
   }
 
-recurringReqA = reqA { requestDetailRequest = Recurring (requestDetailRequest reqA) }
+recurringReqA = reqA { requestDetailRequest = AddressFundsRequest True "addrClientA" }
 
 sampleClientA = newClientState
   { clientStateRequests = Data.Set.fromList [reqA]
@@ -38,6 +38,7 @@ evtA = EventDetail {
   , eventDetailClientId = sampleClientAId
   , eventDetailEvent = AddressFundsChanged "addrClientA"
   , eventDetailRollback  = False
+  , eventDetailRecurring  = False
   , eventDetailTime = 1612543814
   , eventDetailAbsSlot = 1
   , eventDetailBlock = 1
@@ -62,6 +63,7 @@ evtB = EventDetail {
   , eventDetailClientId = sampleClientAId
   , eventDetailEvent = SlotReached 2
   , eventDetailRollback = False
+  , eventDetailRecurring = False
   , eventDetailTime = 1612543815
   , eventDetailAbsSlot = 2
   , eventDetailBlock = 2
@@ -80,6 +82,7 @@ eventWithNoRequest =
   , eventDetailClientId = sampleClientAId
   , eventDetailEvent = UtxoProduced "noSuchAddr" ["noSuchTxHash"]
   , eventDetailRollback = False
+  , eventDetailRecurring = True
   , eventDetailTime = 1622543814
   , eventDetailAbsSlot = 1
   , eventDetailBlock = 1

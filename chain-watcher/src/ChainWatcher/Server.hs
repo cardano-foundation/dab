@@ -140,7 +140,7 @@ handleSSE cid = do
         let rd = RequestDetail {
                      requestDetailRequestId = 0
                    , requestDetailClientId = cid
-                   , requestDetailRequest = Recurring Ping
+                   , requestDetailRequest = Ping True
                    , requestDetailTime = t
                    }
         let nextId = succ $ clientStateLastId c
