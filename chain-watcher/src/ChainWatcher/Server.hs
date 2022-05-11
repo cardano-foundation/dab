@@ -243,7 +243,10 @@ runServer clients qreqs = do
 eventDetailAsServerEvent :: EventDetail -> ServerEvent
 eventDetailAsServerEvent ed =
   ServerEvent
-    (Just $ string8 $ eventName $ ed ^. event)
+    (Just
+      $ string8
+      $ rollbackPrefix (ed ^. rollback)
+      $ eventName (ed ^. event))
     (Just $ intDec . (\(EventId i _uuid) -> i) $ ed ^. eventId)
     [lazyByteString $ encode $ toJSON ed]
 
@@ -254,4 +257,7 @@ eventName (UtxoSpent _ _)            = "UtxoSpent"
 eventName (UtxoProduced _ _)         = "UtxoProduced"
 eventName (TransactionConfirmed _)   = "TransactionConfirmed"
 eventName (AddressFundsChanged _)    = "AddressFundsChanged"
-eventName (Rollback evt)             = "Rollback" ++ (eventName evt)
+
+rollbackPrefix :: Bool -> String -> String
+rollbackPrefix True = ("Rollback"++)
+rollbackPrefix False = id

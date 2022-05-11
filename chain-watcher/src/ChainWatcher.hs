@@ -311,12 +311,15 @@ newEventDetail
   -> EventId
   -> Block
   -> Event
+  -> Bool
   -> EventDetail
-newEventDetail rd ptime eid blk evt = EventDetail
+newEventDetail rd ptime eid blk evt isRollback
+  = EventDetail
   { eventDetailRequestId = requestDetailRequestId rd
   , eventDetailEventId = eid
   , eventDetailClientId = requestDetailClientId rd
   , eventDetailEvent = evt
+  , eventDetailRollback = isRollback
   , eventDetailTime = ptime
   , eventDetailAbsSlot = fromMaybe (error "Block with no slot") $ blk ^. slot
   , eventDetailBlock = fromMaybe (error "Block with no height") $ blk ^. height
@@ -336,7 +339,15 @@ handleRequest rd blk evt = do
   freshId <- fresh
   uuid <- uuidNextRandom
   getTime >>= \t -> tell
-    $ [(rd , newEventDetail rd t (EventId freshId uuid) blk evt)]
+    $ [( rd
+       , newEventDetail
+           rd
+           t
+           (EventId freshId uuid)
+           blk
+           evt
+           False
+      )]
 
 -- | Run server
 handleWatchSource

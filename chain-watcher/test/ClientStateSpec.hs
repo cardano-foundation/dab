@@ -37,13 +37,17 @@ evtA = EventDetail {
   , eventDetailEventId = EventId 0 $ fromJust $ fromString "a2cc10e1-57d6-4b6f-9899-38d972112d8c"
   , eventDetailClientId = sampleClientAId
   , eventDetailEvent = AddressFundsChanged "addrClientA"
+  , eventDetailRollback  = False
   , eventDetailTime = 1612543814
   , eventDetailAbsSlot = 1
   , eventDetailBlock = 1
   }
 
 rollbackEvtA :: EventDetail
-rollbackEvtA = evtA { eventDetailEvent = Rollback (eventDetailEvent evtA)  }
+rollbackEvtA = evtA
+  { eventDetailEvent = eventDetailEvent evtA
+  , eventDetailRollback = True
+  }
 
 reqB = RequestDetail {
     requestDetailRequestId = 1
@@ -57,6 +61,7 @@ evtB = EventDetail {
   , eventDetailEventId = EventId 1 $ fromJust $ fromString "b2cc10e1-57d6-4b6f-9899-38d972112d8c"
   , eventDetailClientId = sampleClientAId
   , eventDetailEvent = SlotReached 2
+  , eventDetailRollback = False
   , eventDetailTime = 1612543815
   , eventDetailAbsSlot = 2
   , eventDetailBlock = 2
@@ -74,6 +79,7 @@ eventWithNoRequest =
   , eventDetailEventId = EventId 0 $ fromJust $ fromString "c2cc10e1-57d6-4b6f-9899-38d972112d8c"
   , eventDetailClientId = sampleClientAId
   , eventDetailEvent = UtxoProduced "noSuchAddr" ["noSuchTxHash"]
+  , eventDetailRollback = False
   , eventDetailTime = 1622543814
   , eventDetailAbsSlot = 1
   , eventDetailBlock = 1

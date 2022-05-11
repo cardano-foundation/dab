@@ -45,6 +45,7 @@ instance ToSample EventDetail where
       , eventDetailClientId  = sampleClientId
       , eventDetailTime      = 1612543814
       , eventDetailEvent     = AddressFundsChanged "addrClientA"
+      , eventDetailRollback  = False
       , eventDetailBlock     = 1
       , eventDetailAbsSlot   = 1
       }

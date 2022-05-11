@@ -50,7 +50,6 @@ data Event =
   | UtxoProduced Address [Tx]
   | TransactionConfirmed Tx
   | AddressFundsChanged Address
-  | Rollback Event
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
 newtype ClientId = ClientId UUID
@@ -78,6 +77,7 @@ data EventDetail = EventDetail {
   , eventDetailClientId :: ClientId
   , eventDetailTime     :: POSIXTime
   , eventDetailEvent    :: Event
+  , eventDetailRollback :: Bool
   , eventDetailBlock    :: Integer
   , eventDetailAbsSlot  :: Slot
   }
@@ -115,7 +115,6 @@ eventToRequest (UtxoSpent txoref _)       = UtxoSpentRequest txoref
 eventToRequest (UtxoProduced addr _)      = UtxoProducedRequest addr
 eventToRequest (TransactionConfirmed t)   = TransactionStatusRequest t
 eventToRequest (AddressFundsChanged addr) = AddressFundsRequest addr
-eventToRequest (Rollback e)               = eventToRequest e
 
 eventDetailToRequestDetail :: EventDetail -> RequestDetail
 eventDetailToRequestDetail ed = RequestDetail {
@@ -163,7 +162,7 @@ updateClientState evt cs =
   case eventDetailEvent evt of
     -- In case of rollback event which was already propagated
     -- we add rollback event to pending and restore subscription
-    Rollback _e | hasPastEvent evt cs ->
+    _ | eventDetailRollback evt && hasPastEvent evt cs ->
       Just $ cs
         { clientStatePendingEvents = evt:clientStatePendingEvents cs
         , clientStateRequests = Data.Set.insert (eventDetailToRequestDetail evt) (clientStateRequests cs)
@@ -171,7 +170,7 @@ updateClientState evt cs =
 
     -- In case of rollback event which is still pending reception by client
     -- we drop it from pending requests and restore subscription
-    Rollback _e | hasPendingEvent evt cs ->
+    _ | eventDetailRollback evt && hasPendingEvent evt cs ->
       Just $ cs
         { clientStatePendingEvents = filter (\ed -> eventDetailEventId ed /= eventDetailEventId evt) (clientStatePendingEvents cs)
         , clientStateRequests = Data.Set.insert (eventDetailToRequestDetail evt) (clientStateRequests cs)
