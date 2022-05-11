@@ -3,7 +3,7 @@ module ChainWatcher.Types
   ( Address(..)
   , Slot(..)
   , TxHash(..)
-  , TxOutRef(..)
+  , TxOutRef
   , Event(..)
   , EventId(..)
   , EventDetail(..)
