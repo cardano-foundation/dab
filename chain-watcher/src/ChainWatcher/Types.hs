@@ -1,20 +1,44 @@
 
-module ChainWatcher.Types where
+module ChainWatcher.Types
+  ( Address(..)
+  , Slot(..)
+  , TxHash(..)
+  , TxOutRef
+  , Event(..)
+  , EventId(..)
+  , EventDetail(..)
+  , Request(..)
+  , RequestDetail(..)
+  , isRecurring
+  , ClientId(..)
+  , ClientState(..)
+  , newClientState
+  , updateClientState
+  , routeEvent
+  , takeEvents
+  , WatchSource(..)
+  , getRequests
+  , produceEvent
+  )
+  where
 
-import Control.Lens (makeFields, makePrisms)
 import Control.Monad.Freer.TH (makeEffect)
 import Data.Map (Map)
 import qualified Data.Map
 import Data.Set (Set)
 import qualified Data.Set
+import Data.Aeson
 import Deriving.Aeson
 
 import Data.Time.Clock.POSIX (POSIXTime)
 import Data.UUID (UUID)
+import qualified Data.Text
+import qualified Data.UUID
+import qualified Text.Read
 
-import Blockfrost.Freer.Client (Address, Slot, TxHash)
+import Blockfrost.Freer.Client (Address(..), Slot(..), TxHash(..))
+import Servant.API (FromHttpApiData (..), ToHttpApiData (..))
 
-type Confirmations = Integer
 type Tx = TxHash
 type TxOutRef = (Tx, Integer)
 
@@ -24,20 +48,36 @@ data Event =
   | UtxoSpent TxOutRef Tx
   | UtxoProduced Address [Tx]
   | TransactionConfirmed Tx
-  | TransactionTentative Tx Confirmations
   | AddressFundsChanged Address
-  | Rollback Event
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
-makePrisms ''Event
+newtype ClientId = ClientId UUID
+  deriving stock (Show, Eq, Ord, Generic)
+  deriving newtype (ToJSON, FromJSON)
+  deriving newtype (FromHttpApiData, ToHttpApiData)
 
-type ClientId = UUID
+data EventId = EventId Int UUID
+  deriving stock (Show, Eq, Ord, Generic)
+
+instance ToJSON EventId where
+  toJSON (EventId i ui) = toJSON $ (show i) ++ "." ++ Data.UUID.toString ui
+
+instance FromJSON EventId where
+  parseJSON = withText "EventId" $ \t -> do
+    let s = Data.Text.unpack t
+        iPart = takeWhile (/='.') s
+    i <- maybe (fail "Can't read integer part of EventId") pure $ Text.Read.readMaybe iPart
+    ui <- maybe (fail "Can't read UUID part of EventId") pure $ Data.UUID.fromString $ drop (length iPart + 1) s
+    pure $ EventId i ui
 
 data EventDetail = EventDetail {
-    eventDetailEventId  :: Integer
+    eventDetailRequestId  :: Integer
+  , eventDetailEventId  :: EventId
   , eventDetailClientId :: ClientId
   , eventDetailTime     :: POSIXTime
   , eventDetailEvent    :: Event
+  , eventDetailRollback :: Bool
+  , eventDetailRecurring :: Bool
   , eventDetailBlock    :: Integer
   , eventDetailAbsSlot  :: Slot
   }
@@ -45,27 +85,14 @@ data EventDetail = EventDetail {
   deriving (FromJSON, ToJSON)
   via CustomJSON '[FieldLabelModifier '[StripPrefix "eventDetail", CamelToSnake]] EventDetail
 
-makeFields ''EventDetail
-
 data Request =
-    Ping
+    Ping Bool
   | SlotRequest Slot
   | UtxoSpentRequest TxOutRef
-  | UtxoProducedRequest Address
+  | UtxoProducedRequest Bool Address
   | TransactionStatusRequest Tx
-  | AddressFundsRequest Address
-  | Cancel Request -- ^ Cancel previous request
-  | Recurring Request -- ^ Recurring request is not removed automatically
+  | AddressFundsRequest Bool Address
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
-
--- possibly
--- TxOut status change
-
-makePrisms ''Request
-
-unRecurring :: Request -> Request
-unRecurring (Recurring r) = r
-unRecurring r             = r
 
 data RequestDetail = RequestDetail {
     requestDetailRequestId :: Integer
@@ -75,24 +102,22 @@ data RequestDetail = RequestDetail {
   }
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
-makeFields ''RequestDetail
-
-eventToRequest :: Event -> Request
-eventToRequest (Pong _s)                  = Ping
-eventToRequest (SlotReached s)            = SlotRequest s
-eventToRequest (UtxoSpent txoref _)       = UtxoSpentRequest txoref
-eventToRequest (UtxoProduced addr _)      = UtxoProducedRequest addr
-eventToRequest (TransactionConfirmed t)   = TransactionStatusRequest t
-eventToRequest (TransactionTentative t _) = TransactionStatusRequest t
-eventToRequest (AddressFundsChanged addr) = AddressFundsRequest addr
-eventToRequest (Rollback e)               = eventToRequest e
+eventToRequest :: Bool -> Event -> Request
+eventToRequest r (Pong _s)                  = Ping r
+eventToRequest _ (SlotReached s)            = SlotRequest s
+eventToRequest _ (UtxoSpent txoref _)       = UtxoSpentRequest txoref
+eventToRequest r (UtxoProduced addr _)      = UtxoProducedRequest r addr
+eventToRequest _ (TransactionConfirmed t)   = TransactionStatusRequest t
+eventToRequest r (AddressFundsChanged addr) = AddressFundsRequest r addr
 
 eventDetailToRequestDetail :: EventDetail -> RequestDetail
-eventDetailToRequestDetail ed = RequestDetail {
-    requestDetailRequestId = eventDetailEventId ed
+eventDetailToRequestDetail ed =
+  RequestDetail
+  { requestDetailRequestId = eventDetailRequestId ed
   , requestDetailClientId = eventDetailClientId ed
-  , requestDetailRequest = eventToRequest $ eventDetailEvent ed
-  , requestDetailTime = eventDetailTime ed }
+  , requestDetailRequest = eventToRequest (eventDetailRecurring ed) $ eventDetailEvent ed
+  , requestDetailTime = eventDetailTime ed
+  }
 
 data WatchSource a where
   GetRequests :: WatchSource (Set RequestDetail)
@@ -133,7 +158,7 @@ updateClientState evt cs =
   case eventDetailEvent evt of
     -- In case of rollback event which was already propagated
     -- we add rollback event to pending and restore subscription
-    Rollback _e | hasPastEvent evt cs ->
+    _ | eventDetailRollback evt && hasPastEvent evt cs ->
       Just $ cs
         { clientStatePendingEvents = evt:clientStatePendingEvents cs
         , clientStateRequests = Data.Set.insert (eventDetailToRequestDetail evt) (clientStateRequests cs)
@@ -141,30 +166,32 @@ updateClientState evt cs =
 
     -- In case of rollback event which is still pending reception by client
     -- we drop it from pending requests and restore subscription
-    Rollback _e | hasPendingEvent evt cs ->
+    _ | eventDetailRollback evt && hasPendingEvent evt cs ->
       Just $ cs
         { clientStatePendingEvents = filter (\ed -> eventDetailEventId ed /= eventDetailEventId evt) (clientStatePendingEvents cs)
         , clientStateRequests = Data.Set.insert (eventDetailToRequestDetail evt) (clientStateRequests cs)
         }
 
-    _ | hasRequest (eventDetailEventId evt) cs ->
+    _ | hasRequest (eventDetailRequestId evt) cs ->
       Just $ cs
         { clientStatePendingEvents = evt:clientStatePendingEvents cs
         , clientStateRequests =
             Data.Set.filter
               (\rd ->
-                 requestDetailRequestId rd /= eventDetailEventId evt
-              || recurring rd
+                 requestDetailRequestId rd /= eventDetailRequestId evt
+              || isRecurring rd
               )
               (clientStateRequests cs)
         }
     _ | otherwise -> Nothing
 
-recurring :: RequestDetail -> Bool
-recurring RequestDetail { requestDetailRequest = Recurring _ } = True
-recurring _                                                    = False
+isRecurring :: RequestDetail -> Bool
+isRecurring rd = case requestDetailRequest rd of
+  Ping rec -> rec
+  UtxoProducedRequest rec _ -> rec
+  AddressFundsRequest rec _ -> rec
+  _ -> False
 
-hasRequest :: Integer -> ClientState -> Bool
 hasRequest rid =
   not
   . Data.Set.null

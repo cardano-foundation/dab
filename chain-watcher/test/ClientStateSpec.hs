@@ -14,17 +14,18 @@ import Test.Tasty.QuickCheck
 -- temp
 import Blockfrost.Freer.Client (Address, Slot (..), TxHash)
 
-sampleClientAId :: UUID
-sampleClientAId = fromMaybe (error "absurd") $ fromString "c2cc10e1-57d6-4b6f-9899-38d972112d8c"
+sampleClientAId :: ClientId
+sampleClientAId = ClientId $ fromJust $ fromString "c2cc10e1-57d6-4b6f-9899-38d972112d8c"
+
 
 reqA = RequestDetail {
     requestDetailRequestId = 0
   , requestDetailClientId = sampleClientAId
-  , requestDetailRequest = AddressFundsRequest "addrClientA"
+  , requestDetailRequest = AddressFundsRequest False "addrClientA"
   , requestDetailTime = 1612543814
   }
 
-recurringReqA = reqA { requestDetailRequest = Recurring (requestDetailRequest reqA) }
+recurringReqA = reqA { requestDetailRequest = AddressFundsRequest True "addrClientA" }
 
 sampleClientA = newClientState
   { clientStateRequests = Data.Set.fromList [reqA]
@@ -32,16 +33,22 @@ sampleClientA = newClientState
   }
 
 evtA = EventDetail {
-    eventDetailEventId = 0
+    eventDetailRequestId = 0
+  , eventDetailEventId = EventId 0 $ fromJust $ fromString "a2cc10e1-57d6-4b6f-9899-38d972112d8c"
   , eventDetailClientId = sampleClientAId
   , eventDetailEvent = AddressFundsChanged "addrClientA"
+  , eventDetailRollback  = False
+  , eventDetailRecurring  = False
   , eventDetailTime = 1612543814
   , eventDetailAbsSlot = 1
   , eventDetailBlock = 1
   }
 
 rollbackEvtA :: EventDetail
-rollbackEvtA = evtA { eventDetailEvent = Rollback (eventDetailEvent evtA)  }
+rollbackEvtA = evtA
+  { eventDetailEvent = eventDetailEvent evtA
+  , eventDetailRollback = True
+  }
 
 reqB = RequestDetail {
     requestDetailRequestId = 1
@@ -51,9 +58,12 @@ reqB = RequestDetail {
   }
 
 evtB = EventDetail {
-    eventDetailEventId = 1
+    eventDetailRequestId = 1
+  , eventDetailEventId = EventId 1 $ fromJust $ fromString "b2cc10e1-57d6-4b6f-9899-38d972112d8c"
   , eventDetailClientId = sampleClientAId
   , eventDetailEvent = SlotReached 2
+  , eventDetailRollback = False
+  , eventDetailRecurring = False
   , eventDetailTime = 1612543815
   , eventDetailAbsSlot = 2
   , eventDetailBlock = 2
@@ -67,9 +77,12 @@ sampleClientB = newClientState
 eventWithNoRequest :: EventDetail
 eventWithNoRequest =
    EventDetail {
-    eventDetailEventId = -1
+    eventDetailRequestId = -1
+  , eventDetailEventId = EventId 0 $ fromJust $ fromString "c2cc10e1-57d6-4b6f-9899-38d972112d8c"
   , eventDetailClientId = sampleClientAId
   , eventDetailEvent = UtxoProduced "noSuchAddr" ["noSuchTxHash"]
+  , eventDetailRollback = False
+  , eventDetailRecurring = True
   , eventDetailTime = 1622543814
   , eventDetailAbsSlot = 1
   , eventDetailBlock = 1

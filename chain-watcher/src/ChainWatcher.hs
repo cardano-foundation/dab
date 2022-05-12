@@ -7,12 +7,15 @@ import Control.Concurrent.STM
 import Control.Lens
 import Control.Monad
 import Control.Monad.Freer
+import Control.Monad.Freer.AcidState
 import Control.Monad.Freer.Error
+import Control.Monad.Freer.Fresh
 import Control.Monad.Freer.Log
 import Control.Monad.Freer.Reader hiding (asks)
 import Control.Monad.Freer.State
 import Control.Monad.Freer.Time
 import Control.Monad.Freer.Writer
+import Control.Monad.Freer.UUID
 import Control.Monad.IO.Class (MonadIO (liftIO))
 
 import Colog.Core.IO (logStringStdout)
@@ -29,7 +32,9 @@ import qualified Data.Text
 
 import Blockfrost.Freer.Client hiding (api)
 
+import ChainWatcher.Lens
 import ChainWatcher.Server
+import ChainWatcher.State
 import ChainWatcher.Types
 
 main :: IO ()
@@ -54,20 +59,28 @@ runWatcher qreqs qevts = fix $ \loop -> do
   startBlock' <- runBlockfrost prj getLatestBlock
   -- should look-up N-depth previous blocks and use Nth as startBlock
   -- in case that the one we get from getLatestBlock disappears
+
+  let delayAndLoop = do
+        putStrLn "Restarting"
+        Control.Concurrent.threadDelay 10_000_000
+        loop
+
   case startBlock' of
-    Left e -> error $ "Can't fetch latest block, error was " ++ show e
+    Left e -> do
+      putStrLn $ "Can't fetch latest block, error was " ++ show e
+      delayAndLoop
     Right startBlock -> do
+      blkAcid <- openLocalState ([startBlock])
       handleBlockfrostClient <- defaultBlockfrostHandler
       res <- runM
         . runError @WatcherError
         . runLogAction (contramap Data.Text.unpack logStringStdout)
         . runTime
-        . evalState @Block startBlock
-        . evalState @[Block] (pure startBlock)
+        . evalAcidState @[Block] blkAcid QueryState WriteState
         . evalState @(Set RequestDetail) mempty
         . evalState @(Map TxOutRef Address) mempty
-        . evalState @(Map Tx Integer) mempty
-        . runReader @Int 10
+        . evalFresh 0
+        . handleUUIDEffect
         . handleBlockfrostClient
         . runReader @(TQueue RequestDetail) qreqs
         . runReader @(TQueue EventDetail) qevts
@@ -78,15 +91,11 @@ runWatcher qreqs qevts = fix $ \loop -> do
       case res of
         Right (Left (be :: BlockfrostError)) -> do
           putStrLn $ "Exited with blockfrost error" ++ show be
-          putStrLn "Restarting"
-          Control.Concurrent.threadDelay 10_000_000
-          loop
+          delayAndLoop
         Right _ -> pure ()
         Left (e :: WatcherError) -> do
           putStrLn $ "Exited with error " ++ show e
-          putStrLn "Restarting"
-          Control.Concurrent.threadDelay 10_000_000
-          loop
+          delayAndLoop
 
 maxRollbackSize :: Int
 maxRollbackSize = 2160
@@ -108,54 +117,68 @@ watch :: forall m effs a .
   , MonadIO m
   , Members ClientEffects effs
   , Member (State (Set RequestDetail)) effs
-  , Member (State Block) effs
   , Member (State [Block]) effs
   , Member (State (Map TxOutRef Address)) effs
-  , Member (State (Map Tx Integer)) effs
   , Member WatchSource effs
   , Member (Log Text) effs
   , Member Time effs
+  , Member UUIDEffect effs
+  , Member Fresh effs
   , Member (Error WatcherError) effs
   )
  => Eff effs a
 watch = do
-  startBlock <- get @Block
+  startBlock <- head <$> get @[Block]
   logs @Text $ "Watcher thread started at block " <> (startBlock ^. hash . coerced)
 
-
   forever $ do
-    currentBlock <- get @Block
+    currentBlock <- head <$> get @[Block]
 
     newReqs <- getRequests
     unless (Data.Set.null newReqs) $ do
       logs $ "New requests " <> showText newReqs
-      forM_ (Data.Set.toList newReqs) $ \req -> case unRecurring $ req ^. request of
-        TransactionStatusRequest tx -> do
-          etx <- tryError $ getTx tx
-          case etx of
-            Left BlockfrostNotFound -> pure ()
-            Left e -> rethrow e
-            Right txinfo -> modify @(Map Tx Integer) $ Data.Map.insert tx (txinfo ^. blockHeight)
+      handled <-
+        fmap snd
+        $ runWriter @[(RequestDetail, EventDetail)]
+        $ forM_ (Data.Set.toList newReqs) $ \req -> case req ^. request of
+            TransactionStatusRequest tx -> do
+              txBlk <- tryError $ do
+                txInfo <- getTx tx
+                getBlock (Left $ txInfo ^. blockHeight)
 
-        -- look up the address holding the utxo so we can track it in block processing loop
-        UtxoSpentRequest txoutref@(tx, txoutindex) -> do
-          etx <- tryError $ getTxUtxos tx
-          case etx of
-            Left BlockfrostNotFound -> logs @Text $ "Transaction not found for TxOutRef " <> showText txoutref
-            Left e -> rethrow e
-            Right utxos -> do
-              let relevant = filter ((== txoutindex) . view outputIndex) (utxos ^. outputs)
-              case relevant of
-                [x] -> do
-                  let addr = x ^. address
-                  logs @Text $ "Adding utxo address to map of watched addresses " <> showText addr
-                  modify @(Map TxOutRef Address) $ Data.Map.insert txoutref addr
+              case txBlk of
+                Left BlockfrostNotFound -> pure ()
+                Left e -> rethrow e
+                Right blk -> do
+                  handleRequest req blk $ TransactionConfirmed tx
 
-                _ -> logs $ "Transaction output not found" <> showText txoutref
+            -- look up the address holding the utxo so we can track it in block processing loop
+            UtxoSpentRequest txoutref@(tx, txoutindex) -> do
+              etx <- tryError $ getTxUtxos tx
+              case etx of
+                Left BlockfrostNotFound -> logs @Text $ "Transaction not found for TxOutRef " <> showText txoutref
+                Left e -> rethrow e
+                Right utxos -> do
+                  let relevant = filter ((== txoutindex) . view outputIndex) (utxos ^. outputs)
+                  case relevant of
+                    [x] -> do
+                      let addr = x ^. address
+                      logs @Text $ "Adding utxo address to map of watched addresses " <> showText addr
+                      modify @(Map TxOutRef Address) $ Data.Map.insert txoutref addr
 
-        _ -> pure ()
+                    _ -> logs $ "Transaction output not found" <> showText txoutref
 
-      modify @(Set RequestDetail) $ Data.Set.union newReqs
+            _ -> pure ()
+
+      logs $ "Instantly handled " <> (showText $ length handled) <> " requests"
+      forM_ (map snd handled) produceEvent
+
+      modify @(Set RequestDetail) $
+        Data.Set.union
+          (Data.Set.difference
+            newReqs
+            (Data.Set.fromList $ map fst handled)
+          )
 
     next <- tryError $ getNextBlocks (Right $ currentBlock ^. hash)
     case next of
@@ -173,7 +196,6 @@ watch = do
 
         (found, new, dropped) <- findExisting prev []
         logs @Text $ "Found previous existing block " <> (found ^. hash . coerced)
-        put @Block found
         put @[Block] new
         logs @Text $ "Dropped " <> (showText $ length dropped) <> " blocks"
         -- onRollback
@@ -203,21 +225,20 @@ watch = do
                 blockTxHashes = Data.Set.fromList $ concatMap snd addrsTxs
 
             reqs <- get @(Set RequestDetail)
-            trackedTxs <- get @(Map Tx Integer)
 
             forM (Data.Set.toList reqs) $ \req -> do
               let handle = handleRequest req blk
-              case unRecurring $ req ^. request of
-                AddressFundsRequest addr | addr `Data.Set.member` addrs -> do
+              case req ^. request of
+                AddressFundsRequest _rec addr | addr `Data.Set.member` addrs -> do
                   handle $ AddressFundsChanged addr
 
-                Ping -> do
+                Ping _rec -> do
                   handle $ Pong blockSlot
 
                 SlotRequest s | s >= blockSlot -> do
                   handle $ SlotReached blockSlot
 
-                UtxoProducedRequest addr | addr `Data.Set.member` addrs -> do
+                UtxoProducedRequest _rec addr | addr `Data.Set.member` addrs -> do
                   case Data.Map.lookup addr addrTxMap of
                     Nothing -> pure () -- can't happen but we should log it
                     Just txs -> do
@@ -254,32 +275,8 @@ watch = do
                                 handle $ UtxoSpent txoutref tx
                               _ -> pure ()
 
-                TransactionStatusRequest tx |    tx `Data.Set.member` blockTxHashes
-                                              && tx `Data.Map.notMember` trackedTxs -> do
-                  txinfo <- getTx tx
-                  case (-) <$> blk ^. height <*> txinfo ^? blockHeight of
-                      Nothing -> throwError $ RuntimeError "Block with no blockHeight"
-                      Just depth | depth >= 10 -> do
-                        handle $ TransactionConfirmed tx
-                      Just depth | depth < 10 -> do
-                        -- this can end up negative since another block might get added
-                        -- in between our getBlockAffectedAddresses call and getTx call..
-                        handle $ TransactionTentative tx (min 0 depth)
-                        modify @(Map Tx Integer) $ Data.Map.insert tx (txinfo ^. blockHeight)
-                      Just _depth -> throwError $ RuntimeError "Absurd tx depth"
-
-                TransactionStatusRequest tx | tx `Data.Map.member` trackedTxs -> do
-                  case Data.Map.lookup tx trackedTxs of
-                    Nothing -> pure ()
-                    Just txBlockHeight -> do
-                      case (-) <$> blk ^. height <*> Just txBlockHeight of
-                        Nothing -> throwError $ RuntimeError "Block with no blockHeight"
-                        Just depth | depth >= 10 -> do
-                          handle $ TransactionConfirmed tx
-                          modify @(Map Tx Integer) $ Data.Map.delete tx
-                        Just depth | depth < 10 -> do
-                          handle $ TransactionTentative tx depth
-                        Just _depth -> throwError $ RuntimeError "Absurd tx depth"
+                TransactionStatusRequest tx | tx `Data.Set.member` blockTxHashes ->
+                  handle $ TransactionConfirmed tx
 
                 _ -> pure ()
 
@@ -287,7 +284,6 @@ watch = do
           Left e -> do
             logs $ "Error caught during new block processing loop " <> (showText e)
           Right handled -> do
-            put @Block $ Prelude.last newBlocks
             modify @[Block] $ \xs -> take maxRollbackSize $ reverse newBlocks ++ xs
 
             logs $ "Produced " <> (showText $ length handled) <> " events"
@@ -295,7 +291,7 @@ watch = do
 
             modify @(Set RequestDetail)
               (flip Data.Set.difference
-                 (Data.Set.filter (not . recurring) handledReqs))
+                 (Data.Set.filter (not . isRecurring) handledReqs))
 
             let spentTxOutRefs =
                     catMaybes
@@ -312,13 +308,19 @@ watch = do
 newEventDetail
   :: RequestDetail
   -> POSIXTime
+  -> EventId
   -> Block
   -> Event
+  -> Bool
   -> EventDetail
-newEventDetail rd ptime blk evt = EventDetail
-  { eventDetailEventId = requestDetailRequestId rd
+newEventDetail rd ptime eid blk evt isRollback
+  = EventDetail
+  { eventDetailRequestId = requestDetailRequestId rd
+  , eventDetailEventId = eid
   , eventDetailClientId = requestDetailClientId rd
   , eventDetailEvent = evt
+  , eventDetailRollback = isRollback
+  , eventDetailRecurring = isRecurring rd
   , eventDetailTime = ptime
   , eventDetailAbsSlot = fromMaybe (error "Block with no slot") $ blk ^. slot
   , eventDetailBlock = fromMaybe (error "Block with no height") $ blk ^. height
@@ -326,14 +328,27 @@ newEventDetail rd ptime blk evt = EventDetail
 
 handleRequest
   :: ( Member Time effs
-     , Member (Writer [(RequestDetail, EventDetail)]) effs)
+     , Member (Writer [(RequestDetail, EventDetail)]) effs
+     , Member UUIDEffect effs
+     , Member Fresh effs
+     )
   => RequestDetail
   -> Block
   -> Event
   -> Eff effs ()
 handleRequest rd blk evt = do
+  freshId <- fresh
+  uuid <- uuidNextRandom
   getTime >>= \t -> tell
-    $ [(rd , newEventDetail rd t blk evt)]
+    $ [( rd
+       , newEventDetail
+           rd
+           t
+           (EventId freshId uuid)
+           blk
+           evt
+           False
+      )]
 
 -- | Run server
 handleWatchSource

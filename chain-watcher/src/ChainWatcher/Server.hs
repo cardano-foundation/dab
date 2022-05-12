@@ -7,14 +7,17 @@ import Control.Concurrent.STM
 import Control.Lens
 import Control.Monad.Reader
 
-import Data.Aeson (encode, toJSON)
-import Data.ByteString.Builder (integerDec, lazyByteString, string8)
+import Data.Aeson (encode, ToJSON(toJSON))
+import Data.ByteString.Builder (intDec, lazyByteString, string8)
 import Data.Map (Map)
+import Data.OpenApi (OpenApi)
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Data.UUID.V4 (nextRandom)
 
+import qualified Data.ByteString.Lazy
 import qualified Data.Map
 import qualified Data.Set
+import qualified Data.Yaml
 import qualified Pipes
 
 import Network.Wai (Middleware)
@@ -27,9 +30,16 @@ import Network.Wai.Middleware.Cors (simpleCors)
 import Network.Wai.Middleware.Gzip (def, gzip)
 import Servant
 import Servant.API.EventStream
+import Servant.OpenApi ()
+import Servant.Swagger.UI.Blaze
+import Servant.Swagger.UI.ReDoc.Blaze
 
 import ChainWatcher.Api
+import ChainWatcher.Lens
+import ChainWatcher.OpenApi
 import ChainWatcher.Types
+
+-- * Core server
 
 data ServerState = ServerState
   { serverStateClients      :: TVar (Map ClientId ClientState)
@@ -38,13 +48,11 @@ data ServerState = ServerState
 
 type AppM = ReaderT ServerState Handler
 
--- and also requests queue
 server :: ServerT API AppM
 server =
        pure True
   :<|> handleSSE
   :<|> handleClientsApi
-  :<|> serveDirectoryWebApp "static"
 
 handleClientsApi :: ServerT ClientsAPI AppM
 handleClientsApi =
@@ -57,9 +65,9 @@ handleNewClient :: AppM ClientId
 handleNewClient = do
   tclients <- asks serverStateClients
   liftIO $ do
-    uuid <- nextRandom
-    atomically $ modifyTVar tclients (Data.Map.insert uuid newClientState)
-    pure uuid
+    cId <- ClientId <$> nextRandom
+    atomically $ modifyTVar tclients (Data.Map.insert cId newClientState)
+    pure cId
 
 handleRemoveClient :: ClientId -> AppM ()
 handleRemoveClient cid = do
@@ -132,7 +140,7 @@ handleSSE cid = do
         let rd = RequestDetail {
                      requestDetailRequestId = 0
                    , requestDetailClientId = cid
-                   , requestDetailRequest = Recurring Ping
+                   , requestDetailRequest = Ping True
                    , requestDetailTime = t
                    }
         let nextId = succ $ clientStateLastId c
@@ -170,6 +178,48 @@ handleSSE cid = do
             liftIO $ do
               Control.Concurrent.threadDelay 1_000_000
 
+-- * Docs
+
+type DocsAPI =
+       SwaggerSchemaUI "swagger-ui" "swagger.json" OpenApi
+  :<|> SwaggerSchemaUI "redoc" "swagger.json" OpenApi
+  :<|> "swagger.yaml" :> Get '[YAML] OpenApi
+
+data YAML
+
+instance Accept YAML where
+  contentType _ = "text/yaml"
+
+instance {-# OVERLAPPABLE #-} ToJSON a => MimeRender YAML a where
+  mimeRender _ x = Data.ByteString.Lazy.fromStrict $ Data.Yaml.encode x
+
+docServer :: Server DocsAPI
+docServer =
+            swaggerSchemaUIServer "ChainWatcher API - Swagger UI" chainwatcherSwagger
+       :<|> redocSchemaUIServer "ChainWatcher API - ReDoc" chainwatcherSwagger
+       :<|> pure chainwatcherSwagger
+
+type CombinedAPI =
+       API
+  :<|> DocsAPI
+  :<|> "demo" :> Raw
+
+-- * Combined
+
+combinedServer
+  :: TVar (Map ClientId ClientState)
+  -> TQueue RequestDetail
+  -> Server CombinedAPI
+combinedServer clients qreqs =
+  hoistServer
+    api
+    (flip
+      Control.Monad.Reader.runReaderT
+        (ServerState clients qreqs))
+    server
+  :<|> docServer
+  :<|> serveDirectoryWebApp "static"
+
 runServer
   :: TVar (Map ClientId ClientState)
   -> TQueue RequestDetail -> IO ()
@@ -178,11 +228,8 @@ runServer clients qreqs = do
     $ simpleCors
     $ gzip def
     $ headers
-    $ serve api
-    $ hoistServer
-        api
-        (flip Control.Monad.Reader.runReaderT (ServerState clients qreqs))
-        server
+    $ serve (Proxy @CombinedAPI)
+    $ combinedServer clients qreqs
   where
       -- headers required for SSE to work through nginx
       -- not required if using warp directly
@@ -191,11 +238,16 @@ runServer clients qreqs = do
                              ("Cache-Control", "no-cache")
                            ]
 
+-- * Server Sent Events
+
 eventDetailAsServerEvent :: EventDetail -> ServerEvent
 eventDetailAsServerEvent ed =
   ServerEvent
-    (Just $ string8 $ eventName $ ed ^. event)
-    (Just $ integerDec $ ed ^. eventId)
+    (Just
+      $ string8
+      $ rollbackPrefix (ed ^. rollback)
+      $ eventName (ed ^. event))
+    (Just $ intDec . (\(EventId i _uuid) -> i) $ ed ^. eventId)
     [lazyByteString $ encode $ toJSON ed]
 
 eventName :: Event -> String
@@ -203,7 +255,9 @@ eventName (Pong _)                   = "Pong"
 eventName (SlotReached _)            = "SlotReached"
 eventName (UtxoSpent _ _)            = "UtxoSpent"
 eventName (UtxoProduced _ _)         = "UtxoProduced"
-eventName (TransactionTentative _ _) = "TransactionTentative"
 eventName (TransactionConfirmed _)   = "TransactionConfirmed"
 eventName (AddressFundsChanged _)    = "AddressFundsChanged"
-eventName (Rollback evt)             = "Rollback" ++ (eventName evt)
+
+rollbackPrefix :: Bool -> String -> String
+rollbackPrefix True = ("Rollback"++)
+rollbackPrefix False = id

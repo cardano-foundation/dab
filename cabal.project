@@ -1,6 +1,8 @@
 packages:
   ./blockfrost-freer-client
   ./chain-watcher
+  ./servant-swagger-ui-blaze
+  ./servant-swagger-ui-redoc-blaze
 
 -- until v0.4 is in snapshot
 source-repository-package
@@ -18,3 +20,13 @@ source-repository-package
     location: https://github.com/bflyblue/servant-event-stream
     tag: 7dcb2b3b82882b1ea4c7876e7e5e7ba6556e606a
     --sha256: 04h6xv51if2ki8qgk12wc7avfj9jip0ixh92qd5hxmjnfx072m2d
+
+-- https://github.com/haskell-servant/servant-swagger-ui/pull/92
+source-repository-package
+  type: git
+  location: https://github.com/sorki/servant-swagger-ui
+  tag: 83ef34459f08f8c0eff97b1bb59cab36b00bb338
+  --sha256: 0bhw3i0dm7ab41c66vwai3xx95lwfibsqwx6yc6zp25wcmjdzign
+  subdir:
+    servant-swagger-ui
+    servant-swagger-ui-core

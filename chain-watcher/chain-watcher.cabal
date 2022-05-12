@@ -59,14 +59,24 @@ library
    hs-source-dirs:      src
    exposed-modules:     ChainWatcher
                       , ChainWatcher.Api
+                      , ChainWatcher.Lens
+                      , ChainWatcher.OpenApi
+                      , ChainWatcher.OpenApi.Util
                       , ChainWatcher.Server
+                      , ChainWatcher.State
                       , ChainWatcher.Types
+                      , Control.Monad.Freer.AcidState
                       , Control.Monad.Freer.Log
                       , Control.Monad.Freer.Time
+                      , Control.Monad.Freer.UUID
    build-depends:       base >= 4.7 && < 5
                       , blockfrost-freer-client
                       , co-log-core
+                      , acid-state
+                      , safecopy
+                      , safe-money
                       , aeson
+                      , aeson-pretty
                       , deriving-aeson
                       , freer-simple
                       , async
@@ -76,9 +86,15 @@ library
                       , pretty-simple
                       , containers
                       , mtl
+                      , openapi3
                       , servant
+                      , servant-openapi3
+                      , servant-docs
                       , servant-server
+                      , servant-swagger-ui-blaze
+                      , servant-swagger-ui-redoc-blaze
                       , time
+                      , yaml
                       , uuid
 		      -- streams
                       , servant-event-stream
