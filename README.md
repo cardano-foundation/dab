@@ -33,6 +33,10 @@ Nix is the prefered way to build the chain-watcher and its components.
 nix-build -A chain-watcher.components.exes.chain-watcher-blockfrost
 ```
 
+## Building with Docker
+
+Please see <a href="docs/Docker.md">docs/Docker.md</a>.
+
 # Usage
 
 ## Running the application backend demo
