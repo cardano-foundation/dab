@@ -7,7 +7,7 @@
 
 <br/>
 
-<p align="center">Decentralized applicaton backend for Cardano.</p>
+<p align="center">Decentralized application backend for Cardano.</p>
 <p align="center">
   <a href="#about">About</a> •
   <a href="#installation">Installation</a> •
