@@ -21,7 +21,13 @@
 
 Decentralized application backend (dab) is a toolset that help developers interact with the Cardano blockchain and its smart validators.
 
-At its core, the component called `chain-watcher` is following the chain looking for specific events expected by the application backend. It supports different providers to access the Cardano network, at the moment <a href="https://blockfrost.io/">Blockfrost</a>, with other such as Ogmios or Oura planned. 
+At its core, the component called `chain-watcher` is following the chain looking for specific events expected by the application backend. It supports different providers to access the Cardano network.
+
+# Community
+
+Decentralized application backend (dab) is a community project. We are releasing this minimal viable product in a modular form (at the moment it supports <a href="https://blockfrost.io/">Blockfrost</a> as a provider), we hope that it will gather developer comunity momentum and we will see many more diffenent providers such as Oura, Koios or Ogmios emerge from the develpoment community.
+
+We strongly encourage community members to apply for Project Catalyst funding to make this project their own and better.
 
 # Installation
 
@@ -113,5 +119,3 @@ curl -v -N --http2 -H "Accept:text/event-stream" localhost:8282/sse/${cid}
 We are looking forward to your contributions!
 
 :bulb: See <a href="CONTRIBUTING.md">Contributing</a> and <a href="CODE_OF_CONDUCT.md">Code of conduct</a> for more information about how to contribute your code.
-
-
