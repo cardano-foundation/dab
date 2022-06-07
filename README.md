@@ -25,7 +25,7 @@ At its core, the component called `chain-watcher` is following the chain looking
 
 # Community
 
-Decentralized application backend (dab) is a community project. We are releasing this minimal viable product in a modular form (at the moment it supports <a href="https://blockfrost.io/">Blockfrost</a> as a provider), we hope that it will gather developer comunity momentum and we will see many more diffenent providers such as Oura, Koios or Ogmios emerge from the develpoment community.
+Decentralized application backend (dab) is a community project. We are releasing this minimal viable product in a modular form (at the moment it supports <a href="https://blockfrost.io/">Blockfrost</a> as a provider), we hope that it will gather developer community momentum and we will see many more different providers such as Oura, Koios or Ogmios emerge from the development community.
 
 We strongly encourage community members to apply for Project Catalyst funding to make this project their own and better.
 
